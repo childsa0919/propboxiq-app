@@ -2,6 +2,125 @@ import jsPDF from "jspdf";
 import type { Deal, DealInputs } from "@shared/schema";
 import { calculateDeal, fmtUSD, fmtPct } from "./calc";
 
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Draw the PropBoxIQ plaid mark — 2×2 grid: black, black, black, teal
+ * with a house silhouette knocked out of the top-left cell.
+ * Mirrors <Logo variant="full"> from client/src/components/Logo.tsx (80×80 viewBox).
+ *
+ * @param doc  jsPDF instance
+ * @param x    top-left x in pt
+ * @param y    top-left y in pt
+ * @param size overall mark size in pt (renders at size × size)
+ * @param ink  RGB triple for the dark cells
+ * @param teal RGB triple for the accent cell
+ */
+function drawPropBoxIQMark(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  size: number,
+  ink: [number, number, number],
+  teal: [number, number, number]
+) {
+  // The Logo.tsx viewBox is 80x80; cells are 32x32 with 4pt rx, gutter ~4pt.
+  // We map to `size` pt: scale = size / 80
+  const s = size / 80;
+  const cell = 32 * s;
+  const rx = 4 * s;
+
+  // Cell origins (top-left of each 32x32 in the 80x80 grid: 6 and 42)
+  const c1x = x + 6 * s;
+  const c1y = y + 6 * s;
+  const c2x = x + 42 * s;
+  const c2y = y + 6 * s;
+  const c3x = x + 6 * s;
+  const c3y = y + 42 * s;
+  const c4x = x + 42 * s;
+  const c4y = y + 42 * s;
+
+  // Top-right, bottom-left: plain black
+  doc.setFillColor(...ink);
+  doc.roundedRect(c2x, c2y, cell, cell, rx, rx, "F");
+  doc.roundedRect(c3x, c3y, cell, cell, rx, rx, "F");
+
+  // Bottom-right: teal
+  doc.setFillColor(...teal);
+  doc.roundedRect(c4x, c4y, cell, cell, rx, rx, "F");
+
+  // Top-left: black cell with house-shaped knockout.
+  // jsPDF doesn't support compound paths with even-odd fill cleanly, so we
+  // draw the black cell, then overlay a white house silhouette inside it
+  // (the page background is white, so this reads as a knockout).
+  doc.setFillColor(...ink);
+  doc.roundedRect(c1x, c1y, cell, cell, rx, rx, "F");
+
+  // House silhouette inside top-left cell. Logo coords (in 80x80 space):
+  //   peak (22, 15) → roof to (30, 21) and (14, 21), walls down to y=32, gable wall back up.
+  // Simplified pentagon: peak + 4 corners.
+  const hx = (px: number, py: number): [number, number] => [x + px * s, y + py * s];
+  const peak = hx(22, 15);
+  const rRoof = hx(30, 21);
+  const rBase = hx(30, 32);
+  const lBase = hx(14, 32);
+  const lRoof = hx(14, 21);
+
+  doc.setFillColor(255, 255, 255);
+  doc.setLineWidth(0);
+  // Build a polygon via doc.lines (relative deltas)
+  doc.lines(
+    [
+      [rRoof[0] - peak[0], rRoof[1] - peak[1]],
+      [rBase[0] - rRoof[0], rBase[1] - rRoof[1]],
+      [lBase[0] - rBase[0], lBase[1] - rBase[1]],
+      [lRoof[0] - lBase[0], lRoof[1] - lBase[1]],
+      [peak[0] - lRoof[0], peak[1] - lRoof[1]],
+    ],
+    peak[0],
+    peak[1],
+    [1, 1],
+    "F"
+  );
+}
+
+/**
+ * Some deals store a comps JSON payload in `notes` (the auto-comp pull saves
+ * `{ kind: "comps", compsData: {...} }`). When that's the case there is no
+ * human-written notes string, so the PDF should NOT dump raw JSON.
+ *
+ * Returns:
+ *   { kind: "comps", data }  — comps payload, render as a proper section
+ *   { kind: "text", text }   — human-written notes
+ *   null                     — empty / nothing to render
+ */
+function parseDealNotes(
+  notes: string | null | undefined
+):
+  | { kind: "comps"; data: any }
+  | { kind: "text"; text: string }
+  | null {
+  if (!notes) return null;
+  const trimmed = notes.trim();
+  if (!trimmed) return null;
+  // Quick check: only attempt JSON.parse if it looks like JSON
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj?.kind === "comps" && obj?.compsData) {
+        return { kind: "comps", data: obj.compsData };
+      }
+      // Unknown JSON envelope — don't dump it, treat as nothing
+      return null;
+    } catch {
+      // Not valid JSON — fall through and treat as plain text
+    }
+  }
+  return { kind: "text", text: trimmed };
+}
+
 export function exportDealPdf(deal: Deal, inputs: DealInputs) {
   const r = calculateDeal(inputs);
   const doc = new jsPDF({ unit: "pt", format: "letter" }); // 612 x 792
@@ -24,37 +143,26 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
   doc.setFillColor(...teal);
   doc.rect(0, 0, W, 80, "F");
 
-  // Logo mark — house outline + small accent square (mirrors PropBoxIQ icon)
-  doc.setDrawColor(255, 255, 255);
-  doc.setLineWidth(2);
-  // House silhouette
-  const lx = M;
-  const ly = 18;
-  doc.lines(
-    [
-      [22, -16], // up-right roof
-      [22, 16], // down-right roof
-      [0, 28], // right wall
-      [-44, 0], // bottom
-      [0, -28], // left wall
-    ],
-    lx, ly + 16,
-    [1, 1],
-    "S"
+  // ----- Logo: real PropBoxIQ plaid mark -----
+  // White inner accent so the mark reads cleanly against the dark teal band.
+  // Use white as the "ink" and tealAccent as the bright cell so the mark stays high-contrast on the band.
+  drawPropBoxIQMark(
+    doc,
+    M - 6,
+    8,
+    64,
+    [255, 255, 255], // ink → white on teal band
+    tealAccent       // accent cell → light teal
   );
-  // Accent square inside (the IQ box)
-  doc.setFillColor(...tealAccent);
-  doc.rect(lx + 14, ly + 18, 16, 16, "F");
-  doc.setLineWidth(1);
 
   doc.setFont("helvetica", "bold");
   doc.setTextColor(255, 255, 255);
-  doc.setFontSize(18);
-  doc.text("PropBoxIQ", M + 56, 40);
+  doc.setFontSize(20);
+  doc.text("PropBoxIQ", M + 70, 42);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(...tealAccent);
-  doc.text("Investor Deal Memo", M + 56, 56);
+  doc.text("Investor Deal Memo", M + 70, 58);
 
   doc.setFontSize(9);
   doc.setTextColor(220, 240, 245);
@@ -275,17 +383,87 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
     y += 14;
   });
 
-  // ----- Notes -----
-  if (deal.notes && deal.notes.trim().length > 0) {
+  // ----- Notes / Comps -----
+  // notes can be a JSON "comps" envelope from the auto-comp pull, or plain text
+  // the user typed. Never dump raw JSON — render comps as a clean summary, or skip.
+  const parsedNotes = parseDealNotes(deal.notes);
+  if (parsedNotes?.kind === "text") {
     y += 16;
     sectionTitle("Notes", M, y);
     y += 18;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.setTextColor(...text);
-    const lines = doc.splitTextToSize(deal.notes, W - M * 2);
+    const lines = doc.splitTextToSize(parsedNotes.text, W - M * 2);
     doc.text(lines, M, y);
     y += lines.length * 13;
+  } else if (parsedNotes?.kind === "comps") {
+    const data = parsedNotes.data;
+    y += 16;
+    sectionTitle("Comps Used", M, y);
+    y += 18;
+
+    // Summary line
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(...gray);
+    const summaryParts: string[] = [];
+    summaryParts.push(`${data.compCount ?? data.comps?.length ?? 0} comps`);
+    if (data.radiusMiles != null) summaryParts.push(`${data.radiusMiles} mi radius`);
+    if (data.medianPricePerSqft) summaryParts.push(`median $${Math.round(data.medianPricePerSqft)}/sqft`);
+    if (data.arvLow && data.arvHigh) {
+      summaryParts.push(`ARV range ${fmtUSD(data.arvLow)}–${fmtUSD(data.arvHigh)}`);
+    }
+    doc.text(summaryParts.join("  ·  "), M, y);
+    y += 14;
+
+    // Top comps table (top 4 by price)
+    const comps = Array.isArray(data.comps) ? data.comps.slice(0, 4) : [];
+    if (comps.length > 0) {
+      // Header
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(...gray);
+      const headerY = y + 4;
+      const colAddr = M;
+      const colPrice = M + 280;
+      const colSqft = M + 360;
+      const colPpsf = M + 410;
+      const colDist = M + 460;
+      doc.text("ADDRESS", colAddr, headerY);
+      doc.text("PRICE", colPrice, headerY, { align: "right" });
+      doc.text("SQFT", colSqft, headerY, { align: "right" });
+      doc.text("$/SQFT", colPpsf, headerY, { align: "right" });
+      doc.text("DIST", colDist, headerY, { align: "right" });
+      y = headerY + 4;
+      doc.setDrawColor(...lightGray);
+      doc.line(M, y, W - M, y);
+      y += 10;
+
+      // Rows
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(...text);
+      comps.forEach((c: any) => {
+        const addrLine = doc.splitTextToSize(c.address || "", 270)[0] ?? "";
+        doc.text(addrLine, colAddr, y);
+        doc.text(c.price ? fmtUSD(c.price) : "—", colPrice, y, { align: "right" });
+        doc.text(c.sqft ? c.sqft.toLocaleString() : "—", colSqft, y, { align: "right" });
+        doc.text(
+          c.pricePerSqft ? `$${Math.round(c.pricePerSqft)}` : "—",
+          colPpsf,
+          y,
+          { align: "right" }
+        );
+        doc.text(
+          c.distance != null ? `${c.distance.toFixed(2)} mi` : "—",
+          colDist,
+          y,
+          { align: "right" }
+        );
+        y += 13;
+      });
+    }
   }
 
   // ----- Disclaimer -----
@@ -333,26 +511,24 @@ export function exportComparePdf(items: CompareDeal[]) {
   doc.setFillColor(...teal);
   doc.rect(0, 0, W, 70, "F");
 
-  doc.setFillColor(...tealAccent);
-  doc.rect(M + 14, 32, 14, 14, "F");
-  doc.setDrawColor(255, 255, 255);
-  doc.setLineWidth(2);
-  doc.lines(
-    [[18, -14], [18, 14], [0, 24], [-36, 0], [0, -24]],
-    M, 32 + 14,
-    [1, 1],
-    "S"
+  // Real PropBoxIQ plaid mark (white on teal band)
+  drawPropBoxIQMark(
+    doc,
+    M - 6,
+    4,
+    56,
+    [255, 255, 255],
+    tealAccent
   );
-  doc.setLineWidth(1);
 
   doc.setFont("helvetica", "bold");
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(16);
-  doc.text("PropBoxIQ", M + 50, 36);
+  doc.text("PropBoxIQ", M + 60, 36);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.setTextColor(...tealAccent);
-  doc.text("Deal Comparison", M + 50, 50);
+  doc.text("Deal Comparison", M + 60, 50);
 
   doc.setTextColor(220, 240, 245);
   doc.text(
