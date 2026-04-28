@@ -9,6 +9,7 @@ import { calculateDeal, fmtUSD, fmtPct } from "@/lib/calc";
 import { MapPreview } from "@/components/MapPreview";
 import { SiteIntelligence } from "@/components/SiteIntelligence";
 import { PropertyProfile } from "@/components/PropertyProfile";
+import { CompsMap, type CompPin } from "@/components/CompsMap";
 import {
   TrendingUp,
   TrendingDown,
@@ -24,9 +25,11 @@ import {
   ArrowUpRight,
   Home as HomeIcon,
   FileDown,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { exportDealPdf } from "@/lib/exportPdf";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import CountUp from "react-countup";
 
 export default function QuickResult() {
@@ -44,10 +47,11 @@ export default function QuickResult() {
   });
 
   const updateDeal = useMutation({
-    mutationFn: async (vars: { inputs: DealInputs }) => {
-      const res = await apiRequest("PATCH", `/api/deals/${id}`, {
-        inputs: JSON.stringify(vars.inputs),
-      });
+    mutationFn: async (vars: { inputs?: DealInputs; notes?: string | null }) => {
+      const body: Record<string, unknown> = {};
+      if (vars.inputs !== undefined) body.inputs = JSON.stringify(vars.inputs);
+      if (vars.notes !== undefined) body.notes = vars.notes;
+      const res = await apiRequest("PATCH", `/api/deals/${id}`, body);
       return res.json() as Promise<Deal>;
     },
     onSuccess: () => {
@@ -288,7 +292,11 @@ export default function QuickResult() {
       <SiteIntelligence lat={deal.lat ?? null} lon={deal.lon ?? null} />
 
       {/* Comps used — only when an auto-comp pull was saved on the deal */}
-      <CompsSection notes={deal.notes ?? null} />
+      <CompsSection
+        deal={deal}
+        onUpdateNotes={(notes) => updateDeal.mutate({ notes })}
+        isSaving={updateDeal.isPending}
+      />
 
       {/* Full property profile — county, zoning, owner, sale history, rent estimate, market stats */}
       <PropertyProfile address={deal.address} zip={deal.zip ?? null} />
@@ -375,9 +383,23 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-// Read the saved comps payload from the deal's notes JSON envelope. Returns
-// null when notes is missing, malformed, or not a comps payload (e.g. plain text).
-function parseSavedComps(notes: string | null): null | {
+// Saved comps payload type — `lat`/`lon` come from the server even though early
+// versions of this type didn't include them.
+type SavedComp = {
+  id: string;
+  address: string;
+  price: number;
+  sqft: number | null;
+  beds: number | null;
+  baths: number | null;
+  distance: number;
+  daysOld: number;
+  pricePerSqft: number | null;
+  lat?: number | null;
+  lon?: number | null;
+};
+
+type SavedCompsData = {
   arv: number;
   arvLow: number;
   arvHigh: number;
@@ -399,31 +421,159 @@ function parseSavedComps(notes: string | null): null | {
     standardMaxRadius: number;
     minComps: number;
   };
-  comps: Array<{
-    id: string;
-    address: string;
-    price: number;
-    sqft: number | null;
-    beds: number | null;
-    baths: number | null;
-    distance: number;
+  filters?: {
+    sqftTolerance: number;
     daysOld: number;
-    pricePerSqft: number | null;
-  }>;
-} {
+    targetBedsTolerance: number | null;
+    targetBathsTolerance: number | null;
+  };
+  comps: SavedComp[];
+};
+
+// Full notes envelope including user-edited overrides (excluded comps).
+type CompsNotesEnvelope = {
+  kind: "comps";
+  version: number;
+  compsData: SavedCompsData;
+  excludedCompIds?: string[]; // user-excluded comps (added in v2)
+};
+
+// Read the saved comps payload from the deal's notes JSON envelope. Returns
+// null when notes is missing, malformed, or not a comps payload (e.g. plain text).
+function parseSavedCompsEnvelope(notes: string | null): CompsNotesEnvelope | null {
   if (!notes) return null;
   try {
     const obj = JSON.parse(notes);
     if (obj?.kind !== "comps" || !obj?.compsData) return null;
-    return obj.compsData;
+    return obj as CompsNotesEnvelope;
   } catch {
     return null;
   }
 }
 
-function CompsSection({ notes }: { notes: string | null }) {
-  const data = parseSavedComps(notes);
+// Backward-compat shim used elsewhere
+function parseSavedComps(notes: string | null): SavedCompsData | null {
+  return parseSavedCompsEnvelope(notes)?.compsData ?? null;
+}
+
+function CompsSection({
+  deal,
+  onUpdateNotes,
+  isSaving,
+}: {
+  deal: Deal;
+  onUpdateNotes: (notes: string | null) => void;
+  isSaving: boolean;
+}) {
+  const envelope = parseSavedCompsEnvelope(deal.notes ?? null);
+  const data = envelope?.compsData;
+
+  // Local exclusion state — hydrated from the saved envelope, mutated locally,
+  // then persisted back to the deal via PATCH.
+  const initialExcluded = envelope?.excludedCompIds ?? [];
+  const [excludedIds, setExcludedIds] = useState<Set<string>>(
+    () => new Set(initialExcluded),
+  );
+
+  // Re-hydrate when the deal's notes change (e.g. after a successful PATCH
+  // round-trips through React Query). Strict equality on Sets isn't useful so
+  // we sync via the underlying array.
+  useEffect(() => {
+    setExcludedIds(new Set(envelope?.excludedCompIds ?? []));
+    // We intentionally key off the stringified IDs to avoid loops when the
+    // local Set is the source of truth between server round-trips.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(envelope?.excludedCompIds ?? [])]);
+
   if (!data) return null;
+
+  // Recompute Top-4 / ARV from non-excluded comps. Mirrors server logic.
+  const activeComps = data.comps.filter((c) => !excludedIds.has(c.id));
+  const topIds = new Set(
+    [...activeComps].sort((a, b) => b.price - a.price).slice(0, 4).map((c) => c.id),
+  );
+  const topComps = activeComps.filter((c) => topIds.has(c.id));
+  const liveAnchorPpsf = (() => {
+    const list = topComps
+      .map((c) => c.pricePerSqft)
+      .filter((n): n is number => n != null);
+    if (list.length === 0) return null;
+    return Math.round(list.reduce((a, b) => a + b, 0) / list.length);
+  })();
+  const arvSqft = data.target?.sqft ?? data.subject.sqft;
+  const liveArv = (() => {
+    if (arvSqft && liveAnchorPpsf) return Math.round(arvSqft * liveAnchorPpsf);
+    if (topComps.length === 0) return data.arv; // fallback to original
+    return Math.round(
+      topComps.reduce((a, b) => a + b.price, 0) / topComps.length,
+    );
+  })();
+  const liveBand = activeComps.length >= 6 ? 0.07 : 0.1;
+  const liveLow = Math.round(liveArv * (1 - liveBand));
+  const liveHigh = Math.round(liveArv * (1 + liveBand));
+  const isOverridden = excludedIds.size > 0;
+
+  // Toggle one comp's exclusion. Persists immediately so the change survives reloads.
+  const toggleExclude = (id: string) => {
+    setExcludedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      // Persist asynchronously
+      persist(next);
+      return next;
+    });
+  };
+  const resetExclusions = () => {
+    setExcludedIds(new Set());
+    persist(new Set());
+  };
+  const persist = (set: Set<string>) => {
+    const nextEnvelope: CompsNotesEnvelope = {
+      kind: "comps",
+      version: envelope?.version ?? 1,
+      compsData: data,
+      excludedCompIds: Array.from(set),
+    };
+    onUpdateNotes(JSON.stringify(nextEnvelope));
+  };
+
+  // Build map pins (sequential numbering matches the visible list order).
+  const sortedComps = [...data.comps].sort((a, b) => {
+    const aActive = excludedIds.has(a.id) ? 0 : 1;
+    const bActive = excludedIds.has(b.id) ? 0 : 1;
+    if (aActive !== bActive) return bActive - aActive;
+    const aTop = topIds.has(a.id) ? 1 : 0;
+    const bTop = topIds.has(b.id) ? 1 : 0;
+    if (aTop !== bTop) return bTop - aTop;
+    return b.price - a.price;
+  });
+  const pins: CompPin[] = sortedComps.map((c) => ({
+    id: c.id,
+    address: c.address,
+    price: c.price,
+    sqft: c.sqft,
+    pricePerSqft: c.pricePerSqft,
+    distance: c.distance,
+    lat: c.lat ?? null,
+    lon: c.lon ?? null,
+    isTop: topIds.has(c.id),
+    excluded: excludedIds.has(c.id),
+  }));
+  const hasMapCoords =
+    deal.lat != null &&
+    deal.lon != null &&
+    pins.some((p) => p.lat != null && p.lon != null);
+
+  // Filter chip strip
+  const sqftTolerancePct = Math.round((data.filters?.sqftTolerance ?? 0.15) * 100);
+  const daysOldMonths = Math.round((data.filters?.daysOld ?? 180) / 30);
+  const radiusLabel = data.radiusMiles
+    ? data.radiusMiles < 1
+      ? `${data.radiusMiles} mi`
+      : `${data.radiusMiles.toFixed(2)} mi`
+    : "—";
+
   return (
     <Card className="mb-8">
       <CardContent className="p-6">
@@ -440,26 +590,26 @@ function CompsSection({ notes }: { notes: string | null }) {
             </p>
           </div>
           <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            {data.compCount} comps · {data.radiusMiles ?? "—"} mi
+            {activeComps.length} comps · {radiusLabel}
           </span>
         </div>
-        {data.target &&
-          (data.target.sqft || data.target.beds || data.target.baths) && (
-            <div className="mb-4 rounded-lg border border-accent/30 bg-accent/5 px-3.5 py-2.5 text-[11px] flex items-center gap-2 flex-wrap">
-              <span className="font-semibold uppercase tracking-wide text-accent">
-                Matched to post-rehab
-              </span>
-              <span className="text-muted-foreground">
-                {[
-                  data.target.sqft ? `${data.target.sqft.toLocaleString()} sqft` : null,
-                  data.target.beds ? `${data.target.beds} bd` : null,
-                  data.target.baths ? `${data.target.baths} ba` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </span>
-            </div>
+
+        {/* Filter transparency strip */}
+        <div className="mb-4 flex flex-wrap items-center gap-1.5">
+          <FilterChip>{radiusLabel} radius</FilterChip>
+          <FilterChip>±{sqftTolerancePct}% sqft</FilterChip>
+          <FilterChip>last {daysOldMonths} mo</FilterChip>
+          {data.filters?.targetBedsTolerance != null && (
+            <FilterChip>±1 bed</FilterChip>
           )}
+          {data.filters?.targetBathsTolerance != null && (
+            <FilterChip>±1 bath</FilterChip>
+          )}
+          {data.target?.sqft && (
+            <FilterChip>matched to post-rehab</FilterChip>
+          )}
+        </div>
+
         {data.quality && data.quality.level !== "good" && (
           <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 flex items-start gap-2.5">
             <div className="h-4 w-4 rounded-full bg-amber-500/25 flex items-center justify-center shrink-0 mt-0.5">
@@ -478,103 +628,185 @@ function CompsSection({ notes }: { notes: string | null }) {
             </div>
           </div>
         )}
-        <div className="grid grid-cols-3 gap-3 mb-5">
-          <CompStat label="Auto ARV" value={fmtUSD(data.arv)} accent />
+
+        {/* Map */}
+        {hasMapCoords && (
+          <div className="mb-5">
+            <CompsMap
+              subject={{
+                lat: deal.lat ?? null,
+                lon: deal.lon ?? null,
+                address: deal.address,
+              }}
+              comps={pins}
+              radiusMiles={data.radiusMiles ?? null}
+            />
+            <p className="mt-2 text-[10px] text-muted-foreground flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#126D85]" />
+              top-4 used for ARV
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-white border border-[#126D85] ml-2" />
+              other comps
+              <span className="ml-2">· dotted ring = search radius</span>
+            </p>
+          </div>
+        )}
+
+        {/* ARV stats — with override indicator */}
+        <div className="grid grid-cols-3 gap-3 mb-3">
           <CompStat
-            label="Range"
-            value={`${fmtUSD(data.arvLow)} – ${fmtUSD(data.arvHigh)}`}
+            label={isOverridden ? "Adjusted ARV" : "Auto ARV"}
+            value={fmtUSD(liveArv)}
+            accent
           />
           <CompStat
-            label={data.arvAnchorPpsf ? "Top-4 $/sqft" : "Median $/sqft"}
+            label="Range"
+            value={`${fmtUSD(liveLow)} – ${fmtUSD(liveHigh)}`}
+          />
+          <CompStat
+            label={liveAnchorPpsf ? "Top-4 $/sqft" : "Median $/sqft"}
             value={
-              data.arvAnchorPpsf
-                ? `$${data.arvAnchorPpsf}`
+              liveAnchorPpsf
+                ? `$${liveAnchorPpsf}`
                 : data.medianPricePerSqft
                   ? `$${data.medianPricePerSqft}`
                   : "—"
             }
           />
         </div>
-        {(() => {
-          // Sort comps so the 4 used for ARV (highest sale prices) appear first.
-          const topIds = new Set(
-            data.arvTopCompIds && data.arvTopCompIds.length > 0
-              ? data.arvTopCompIds
-              : [...data.comps]
-                  .sort((a, b) => b.price - a.price)
-                  .slice(0, 4)
-                  .map((c) => c.id),
-          );
-          const sortedComps = [...data.comps].sort((a, b) => {
-            const aTop = topIds.has(a.id) ? 1 : 0;
-            const bTop = topIds.has(b.id) ? 1 : 0;
-            if (aTop !== bTop) return bTop - aTop;
-            return b.price - a.price;
-          });
-          return (
-            <ul className="divide-y divide-card-border border border-card-border rounded-lg overflow-hidden">
-              {sortedComps.map((c) => {
-                const isTop = topIds.has(c.id);
-                return (
-                  <li
-                    key={c.id}
-                    className={`px-4 py-3 flex items-center gap-3 ${
-                      isTop ? "bg-accent/5" : ""
-                    }`}
-                    data-testid={`comp-row-${c.id}`}
-                  >
-                    <HomeIcon
-                      className={`h-4 w-4 shrink-0 ${
-                        isTop ? "text-accent" : "text-muted-foreground"
+
+        {/* Override banner */}
+        {isOverridden && (
+          <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 flex items-center justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-200">
+                {excludedIds.size} comp{excludedIds.size === 1 ? "" : "s"} excluded
+              </p>
+              <p className="text-xs text-amber-100/90 mt-0.5">
+                ARV recalculated from the remaining top {Math.min(4, topComps.length)}.
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={resetExclusions}
+              disabled={isSaving}
+              className="shrink-0 text-amber-200 hover:bg-amber-500/20"
+              data-testid="button-reset-comp-exclusions"
+            >
+              Reset
+            </Button>
+          </div>
+        )}
+
+        {/* Comp list with exclude toggle */}
+        <ul className="divide-y divide-card-border border border-card-border rounded-lg overflow-hidden">
+          {sortedComps.map((c, i) => {
+            const isTop = topIds.has(c.id);
+            const isExcluded = excludedIds.has(c.id);
+            // Pin number matches map (1-indexed, in display order)
+            const pinN = i + 1;
+            return (
+              <li
+                key={c.id}
+                className={`px-4 py-3 flex items-center gap-3 ${
+                  isExcluded
+                    ? "bg-muted/20 opacity-60"
+                    : isTop
+                      ? "bg-accent/5"
+                      : ""
+                }`}
+                data-testid={`comp-row-${c.id}`}
+              >
+                <span
+                  className={`shrink-0 inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold tabular-nums ${
+                    isTop
+                      ? "bg-[#126D85] text-white"
+                      : "border border-[#126D85] text-[#5fd4e7] bg-transparent"
+                  } ${isExcluded ? "line-through" : ""}`}
+                >
+                  {pinN}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p
+                      className={`text-sm font-medium truncate ${
+                        isExcluded ? "line-through" : ""
                       }`}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-sm font-medium truncate">
-                          {c.address}
-                        </p>
-                        {isTop && (
-                          <span className="text-[9px] font-bold uppercase tracking-[0.12em] bg-accent text-accent-foreground px-1.5 py-0.5 rounded">
-                            ARV
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground">
-                        {c.sqft ? `${c.sqft.toLocaleString()} sqft` : "—"}
-                        {c.beds != null && c.baths != null
-                          ? ` · ${c.beds}bd/${c.baths}ba`
-                          : ""}
-                        {" · "}
-                        {c.distance.toFixed(2)} mi
-                        {" · "}
-                        {c.daysOld <= 1 ? "today" : `${c.daysOld}d ago`}
-                      </p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p
-                        className={`text-sm tabular-nums ${
-                          isTop ? "font-bold" : "font-semibold"
-                        }`}
-                      >
-                        {fmtUSD(c.price)}
-                      </p>
-                      {c.pricePerSqft && (
-                        <p className="text-[11px] text-muted-foreground tabular-nums">
-                          ${c.pricePerSqft}/sqft
-                        </p>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          );
-        })()}
+                    >
+                      {c.address}
+                    </p>
+                    {isTop && !isExcluded && (
+                      <span className="text-[9px] font-bold uppercase tracking-[0.12em] bg-accent text-accent-foreground px-1.5 py-0.5 rounded">
+                        ARV
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {c.sqft ? `${c.sqft.toLocaleString()} sqft` : "—"}
+                    {c.beds != null && c.baths != null
+                      ? ` · ${c.beds}bd/${c.baths}ba`
+                      : ""}
+                    {" · "}
+                    {c.distance.toFixed(2)} mi
+                    {" · "}
+                    {c.daysOld <= 1 ? "today" : `${c.daysOld}d ago`}
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p
+                    className={`text-sm tabular-nums ${
+                      isExcluded
+                        ? "line-through"
+                        : isTop
+                          ? "font-bold"
+                          : "font-semibold"
+                    }`}
+                  >
+                    {fmtUSD(c.price)}
+                  </p>
+                  {c.pricePerSqft && (
+                    <p className="text-[11px] text-muted-foreground tabular-nums">
+                      ${c.pricePerSqft}/sqft
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleExclude(c.id)}
+                  disabled={isSaving}
+                  className={`shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                    isExcluded
+                      ? "text-amber-400 hover:bg-amber-500/15"
+                      : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                  } disabled:opacity-50`}
+                  aria-label={isExcluded ? "Include comp" : "Exclude comp"}
+                  title={isExcluded ? "Include comp" : "Exclude comp"}
+                  data-testid={`button-toggle-comp-${c.id}`}
+                >
+                  {isExcluded ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+
         <p className="mt-3 text-[11px] text-muted-foreground">
-          ARV = mean $/sqft of the 4 highest-priced comps × subject sqft. ±15% sqft, last 6 months, cascading radius. Comps powered by RentCast.
+          ARV = mean $/sqft of the 4 highest-priced comps × subject sqft. ±{sqftTolerancePct}% sqft, last {daysOldMonths} mo, cascading radius. Tap the eye icon to exclude a comp — ARV recalculates from the remaining top 4. Comps powered by RentCast.
         </p>
       </CardContent>
     </Card>
+  );
+}
+
+function FilterChip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-[10px] font-medium uppercase tracking-wide rounded-full border border-card-border bg-secondary/40 px-2 py-0.5 text-muted-foreground">
+      {children}
+    </span>
   );
 }
 

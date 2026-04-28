@@ -100,7 +100,7 @@ function drawPropBoxIQMark(
 function parseDealNotes(
   notes: string | null | undefined
 ):
-  | { kind: "comps"; data: any }
+  | { kind: "comps"; data: any; excludedIds: string[] }
   | { kind: "text"; text: string }
   | null {
   if (!notes) return null;
@@ -111,7 +111,11 @@ function parseDealNotes(
     try {
       const obj = JSON.parse(trimmed);
       if (obj?.kind === "comps" && obj?.compsData) {
-        return { kind: "comps", data: obj.compsData };
+        return {
+          kind: "comps",
+          data: obj.compsData,
+          excludedIds: Array.isArray(obj.excludedCompIds) ? obj.excludedCompIds : [],
+        };
       }
       // Unknown JSON envelope — don't dump it, treat as nothing
       return null;
@@ -120,6 +124,57 @@ function parseDealNotes(
     }
   }
   return { kind: "text", text: trimmed };
+}
+
+/**
+ * Recompute ARV / Top-4 / range from the current set of (non-excluded) comps.
+ * Mirrors the server logic used in /api/comps so the PDF reflects the user's
+ * exclusions at export time.
+ */
+function recomputeArvFromComps(
+  data: any,
+  excludedIds: string[],
+): {
+  arv: number;
+  arvLow: number;
+  arvHigh: number;
+  anchorPpsf: number | null;
+  topCompIds: Set<string>;
+  activeComps: any[];
+  isOverridden: boolean;
+} {
+  const isOverridden = excludedIds.length > 0;
+  const excluded = new Set(excludedIds);
+  const activeComps = (data?.comps ?? []).filter((c: any) => !excluded.has(c.id));
+  const topComps = [...activeComps]
+    .sort((a: any, b: any) => b.price - a.price)
+    .slice(0, 4);
+  const ppsfList = topComps
+    .map((c: any) => c.pricePerSqft)
+    .filter((n: any): n is number => typeof n === "number" && Number.isFinite(n));
+  const anchorPpsf =
+    ppsfList.length > 0
+      ? Math.round(ppsfList.reduce((a: number, b: number) => a + b, 0) / ppsfList.length)
+      : null;
+  const arvSqft = data?.target?.sqft ?? data?.subject?.sqft ?? null;
+  let arv = data?.arv ?? 0;
+  if (arvSqft && anchorPpsf) {
+    arv = Math.round(arvSqft * anchorPpsf);
+  } else if (topComps.length > 0) {
+    arv = Math.round(
+      topComps.reduce((a: number, b: any) => a + b.price, 0) / topComps.length,
+    );
+  }
+  const band = activeComps.length >= 6 ? 0.07 : 0.1;
+  return {
+    arv,
+    arvLow: Math.round(arv * (1 - band)),
+    arvHigh: Math.round(arv * (1 + band)),
+    anchorPpsf,
+    topCompIds: new Set(topComps.map((c: any) => c.id)),
+    activeComps,
+    isOverridden,
+  };
 }
 
 export function exportDealPdf(deal: Deal, inputs: DealInputs) {
@@ -403,8 +458,13 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
     y += lines.length * 13;
   } else if (parsedNotes?.kind === "comps") {
     const data = parsedNotes.data;
+    const recomputed = recomputeArvFromComps(data, parsedNotes.excludedIds);
     y += 16;
-    sectionTitle("Comps Used", M, y);
+    sectionTitle(
+      recomputed.isOverridden ? "Comps Used (adjusted)" : "Comps Used",
+      M,
+      y,
+    );
     y += 18;
 
     // Summary line
@@ -412,18 +472,35 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
     doc.setFontSize(9);
     doc.setTextColor(...gray);
     const summaryParts: string[] = [];
-    summaryParts.push(`${data.compCount ?? data.comps?.length ?? 0} comps`);
+    summaryParts.push(`${recomputed.activeComps.length} comps`);
     if (data.radiusMiles != null) summaryParts.push(`${data.radiusMiles} mi radius`);
-    if (data.medianPricePerSqft) summaryParts.push(`median $${Math.round(data.medianPricePerSqft)}/sqft`);
-    if (data.arvLow && data.arvHigh) {
-      summaryParts.push(`ARV range ${fmtUSD(data.arvLow)}–${fmtUSD(data.arvHigh)}`);
-    }
+    const sqftPct = Math.round((data.filters?.sqftTolerance ?? 0.15) * 100);
+    const months = Math.round((data.filters?.daysOld ?? 180) / 30);
+    summaryParts.push(`±${sqftPct}% sqft`);
+    summaryParts.push(`last ${months} mo`);
+    if (recomputed.anchorPpsf) summaryParts.push(`top-4 $${recomputed.anchorPpsf}/sqft`);
+    summaryParts.push(`ARV ${fmtUSD(recomputed.arvLow)}–${fmtUSD(recomputed.arvHigh)}`);
     doc.text(summaryParts.join("  ·  "), M, y);
     y += 14;
 
-    // Top comps table (top 4 by price)
-    const comps = Array.isArray(data.comps) ? data.comps.slice(0, 4) : [];
-    if (comps.length > 0) {
+    if (recomputed.isOverridden) {
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(8);
+      doc.setTextColor(...gray);
+      const excludedCount = parsedNotes.excludedIds.length;
+      doc.text(
+        `Investor excluded ${excludedCount} comp${excludedCount === 1 ? "" : "s"} — ARV recalculated from remaining top ${Math.min(4, recomputed.topCompIds.size)}.`,
+        M,
+        y,
+      );
+      y += 12;
+    }
+
+    // Show top-4 used for ARV (after exclusions)
+    const topComps = recomputed.activeComps
+      .filter((c: any) => recomputed.topCompIds.has(c.id))
+      .sort((a: any, b: any) => b.price - a.price);
+    if (topComps.length > 0) {
       // Header
       doc.setFont("helvetica", "bold");
       doc.setFontSize(8);
@@ -434,7 +511,7 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
       const colSqft = M + 360;
       const colPpsf = M + 410;
       const colDist = M + 460;
-      doc.text("ADDRESS", colAddr, headerY);
+      doc.text("ADDRESS (TOP 4 USED FOR ARV)", colAddr, headerY);
       doc.text("PRICE", colPrice, headerY, { align: "right" });
       doc.text("SQFT", colSqft, headerY, { align: "right" });
       doc.text("$/SQFT", colPpsf, headerY, { align: "right" });
@@ -448,7 +525,7 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
       doc.setTextColor(...text);
-      comps.forEach((c: any) => {
+      topComps.forEach((c: any) => {
         const addrLine = doc.splitTextToSize(c.address || "", 270)[0] ?? "";
         doc.text(addrLine, colAddr, y);
         doc.text(c.price ? fmtUSD(c.price) : "—", colPrice, y, { align: "right" });
@@ -467,6 +544,30 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
         );
         y += 13;
       });
+    }
+
+    // List excluded comps for transparency
+    if (parsedNotes.excludedIds.length > 0) {
+      const excluded = (data.comps ?? []).filter((c: any) =>
+        parsedNotes.excludedIds.includes(c.id),
+      );
+      if (excluded.length > 0) {
+        y += 6;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(...gray);
+        doc.text("EXCLUDED BY INVESTOR", M, y);
+        y += 12;
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(...text);
+        excluded.forEach((c: any) => {
+          const addrLine = doc.splitTextToSize(c.address || "", 380)[0] ?? "";
+          doc.text(addrLine, M, y);
+          doc.text(c.price ? fmtUSD(c.price) : "—", W - M, y, { align: "right" });
+          y += 12;
+        });
+      }
     }
   }
 
