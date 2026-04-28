@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import type { Deal, DealInputs } from "@shared/schema";
 import { calculateDeal, fmtUSD, fmtPct } from "./calc";
+import { PROPBOXIQ_LOGO_BLACK_PNG_DATA_URL } from "./propboxiqLogoData";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -143,15 +144,18 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
   doc.setFillColor(...teal);
   doc.rect(0, 0, W, 80, "F");
 
-  // ----- Logo: real PropBoxIQ plaid mark -----
-  // PDF-only: all 4 cells BLACK (top-left keeps the house cutout knockout).
-  drawPropBoxIQMark(
-    doc,
-    M - 6,
-    8,
-    64,
-    ink,  // 3 cells → black
-    ink   // bottom-right cell → black
+  // ----- Logo: pixel-perfect raster of the real PropBoxIQ mark -----
+  // Rendered from Logo.tsx (full variant, all-black ink) at 256×256 and embedded
+  // as a base64 PNG so the PDF stays in lockstep with the in-app logo.
+  doc.addImage(
+    PROPBOXIQ_LOGO_BLACK_PNG_DATA_URL,
+    "PNG",
+    M - 4,   // x
+    10,      // y
+    60,      // width (pt)
+    60,      // height (pt)
+    undefined,
+    "FAST"
   );
 
   // PropBoxIQ wordmark in black per spec; tagline keeps original light-teal accent
@@ -511,14 +515,16 @@ export function exportComparePdf(items: CompareDeal[]) {
   doc.setFillColor(...teal);
   doc.rect(0, 0, W, 70, "F");
 
-  // PDF-only: all 4 cells black
-  drawPropBoxIQMark(
-    doc,
-    M - 6,
-    4,
-    56,
-    [10, 14, 18], // 3 cells → black
-    [10, 14, 18]  // bottom-right cell → black
+  // Pixel-perfect raster of the real PropBoxIQ mark (all-black variant)
+  doc.addImage(
+    PROPBOXIQ_LOGO_BLACK_PNG_DATA_URL,
+    "PNG",
+    M - 4,
+    6,
+    52,
+    52,
+    undefined,
+    "FAST"
   );
 
   doc.setFont("helvetica", "bold");
