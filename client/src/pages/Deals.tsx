@@ -544,6 +544,20 @@ function DealRow({
                 {deal.city}, {deal.state} {deal.zip}
               </p>
             )}
+            {(deal.sqft || deal.beds != null || deal.baths != null) && (
+              <p
+                className="text-[11px] text-muted-foreground mt-0.5 tabular-nums"
+                data-testid={`text-facts-${deal.id}`}
+              >
+                {[
+                  deal.sqft ? `${deal.sqft.toLocaleString()} sqft` : null,
+                  deal.beds != null ? `${deal.beds} bd` : null,
+                  deal.baths != null ? `${deal.baths} ba` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            )}
           </div>
           {!compareMode && (
             <button
@@ -775,6 +789,17 @@ function CompareTable({
     {
       label: "Hold (months)",
       fmt: (e) => `${e.inputs.holdingMonths}`,
+    },
+    {
+      label: "Sqft",
+      fmt: (e) => (e.deal.sqft ? e.deal.sqft.toLocaleString() : "—"),
+    },
+    {
+      label: "Beds / Baths",
+      fmt: (e) =>
+        e.deal.beds != null && e.deal.baths != null
+          ? `${e.deal.beds} / ${e.deal.baths}`
+          : "—",
     },
     {
       label: "Max offer (MAO)",

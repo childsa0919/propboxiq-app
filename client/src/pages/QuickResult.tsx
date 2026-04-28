@@ -104,6 +104,34 @@ export default function QuickResult() {
               {deal.city}, {deal.state} {deal.zip}
             </p>
           )}
+          {/* Property facts strip — shows what the analysis is built on */}
+          {(deal.sqft || deal.beds != null || deal.baths != null || deal.yearBuilt) && (
+            <div
+              className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] tabular-nums"
+              data-testid="text-property-facts"
+            >
+              {deal.sqft ? (
+                <span className="font-semibold text-foreground">
+                  {deal.sqft.toLocaleString()} sqft
+                </span>
+              ) : null}
+              {deal.beds != null && (
+                <span className="text-muted-foreground">
+                  <span className="font-semibold text-foreground">{deal.beds}</span> bd
+                </span>
+              )}
+              {deal.baths != null && (
+                <span className="text-muted-foreground">
+                  <span className="font-semibold text-foreground">{deal.baths}</span> ba
+                </span>
+              )}
+              {deal.yearBuilt && (
+                <span className="text-muted-foreground">
+                  Built <span className="font-semibold text-foreground">{deal.yearBuilt}</span>
+                </span>
+              )}
+            </div>
+          )}
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {inputs.isTeardown && (
               <span
@@ -122,6 +150,11 @@ export default function QuickResult() {
                 {inputs.lotSqft != null && inputs.lotSqft > 0 && (
                   <> / {inputs.lotSqft.toLocaleString()} sqft</>
                 )}
+              </span>
+            )}
+            {!deal.sqft && (
+              <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                Sqft unavailable — ARV used median sale price
               </span>
             )}
           </div>
