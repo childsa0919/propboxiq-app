@@ -13,6 +13,10 @@ import {
   sendMagicLinkEmail,
   TIMINGS,
 } from "./auth";
+import {
+  ANNE_ARUNDEL_RESIDENTIAL,
+  normalizeAaCountyDistrict,
+} from "./zoning/anne-arundel";
 
 // Census Geocoder — free, no key, US addresses
 const CENSUS_BASE =
@@ -755,6 +759,35 @@ export async function registerRoutes(
       saleHistory: saleHist,
       rentalHistory: rentalHist,
       market: marketSlice,
+      zoningRules: (() => {
+        // Lookup bulk regs only for Anne Arundel County right now.
+        const county = String(p.county ?? "").toLowerCase();
+        if (!county.includes("anne arundel")) return null;
+        const district = normalizeAaCountyDistrict(String(p.zoning ?? ""));
+        if (!district) return null;
+        const regs = ANNE_ARUNDEL_RESIDENTIAL[district];
+        const coverageCapSqft =
+          lotSqft && lotSqft > 0
+            ? Math.round(lotSqft * (regs.maxLotCoveragePct / 100))
+            : null;
+        return {
+          jurisdiction: "Anne Arundel County, MD",
+          district: regs.district,
+          description: regs.description,
+          codeRef: regs.codeRef,
+          minLotSizeSqft: regs.minLotSizeSqft,
+          minFrontWidthFt: regs.minFrontWidthFt,
+          maxLotCoveragePct: regs.maxLotCoveragePct,
+          maxLotCoverageSqft: coverageCapSqft,
+          maxHeightFt: regs.maxHeightFt,
+          setbacks: regs.setbacks,
+          notes: [
+            "Standard subdivision (not cluster). Cluster setbacks differ.",
+            "Critical Area buffer (~100ft from tidal waters) not included.",
+            "Buildable envelope requires lot frontage/depth from a survey.",
+          ],
+        };
+      })(),
     });
   });
 
