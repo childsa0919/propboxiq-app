@@ -3,8 +3,16 @@ import type { Deal, InsertDeal, User, MagicToken, Session } from '@shared/schema
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { and, eq, desc, gt, isNull, or } from "drizzle-orm";
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 
-const sqlite = new Database("data.db");
+// DATA_DIR points at a persistent disk in production (e.g. /var/data on Render).
+// Falls back to the working directory for local dev so `npm run dev` still writes ./data.db.
+const DATA_DIR = process.env.DATA_DIR || ".";
+mkdirSync(DATA_DIR, { recursive: true });
+const DB_PATH = path.join(DATA_DIR, "data.db");
+
+const sqlite = new Database(DB_PATH);
 sqlite.pragma("journal_mode = WAL");
 
 export const db = drizzle(sqlite);
