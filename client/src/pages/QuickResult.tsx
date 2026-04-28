@@ -23,7 +23,9 @@ import {
   ChevronRight,
   ArrowUpRight,
   Home as HomeIcon,
+  FileDown,
 } from "lucide-react";
+import { exportDealPdf } from "@/lib/exportPdf";
 import { useState } from "react";
 import CountUp from "react-countup";
 
@@ -336,7 +338,20 @@ export default function QuickResult() {
         </CardContent>
       </Card>
 
-      <p className="mt-8 text-center text-xs text-muted-foreground">
+      {/* Export to PDF */}
+      <div className="mt-8 flex justify-center">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => exportDealPdf(deal, inputs)}
+          data-testid="button-export-pdf"
+        >
+          <FileDown className="h-4 w-4 mr-2" />
+          Export PDF
+        </Button>
+      </div>
+
+      <p className="mt-6 text-center text-xs text-muted-foreground">
         Want full control over financing, holding costs, and sensitivity?{" "}
         <Link
           href={`/deal/${deal.id}`}
@@ -987,6 +1002,7 @@ function WhatIf({
   const [local, setLocal] = useState(inputs);
   const r = calculateDeal(local);
   const profitable = r.netProfit > 0;
+  const isCash = local.financingType === "cash";
 
   function update<K extends keyof DealInputs>(key: K, value: DealInputs[K]) {
     const next = { ...local, [key]: value };
@@ -996,6 +1012,56 @@ function WhatIf({
 
   return (
     <div className="space-y-5">
+      {/* Financing toggle — Cash zeros out points/interest/loan fees */}
+      <div>
+        <div className="text-xs font-medium text-muted-foreground mb-2">
+          Financing
+        </div>
+        <div
+          className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-card/50 border border-card-border"
+          role="tablist"
+          aria-label="Financing type"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!isCash}
+            onClick={() => update("financingType", "hard_money")}
+            data-testid="button-financing-hard-money"
+            className={`py-2 rounded-md text-sm font-medium transition-colors tabular-nums ${
+              !isCash
+                ? "bg-accent text-accent-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Hard money
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={isCash}
+            onClick={() => update("financingType", "cash")}
+            data-testid="button-financing-cash"
+            className={`py-2 rounded-md text-sm font-medium transition-colors tabular-nums ${
+              isCash
+                ? "bg-accent text-accent-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            All cash
+          </button>
+        </div>
+        <p className="mt-1.5 text-[11px] text-muted-foreground">
+          {isCash
+            ? `No interest, points, or loan fees — saves ${fmtUSD(
+                inputs.financingType === "cash"
+                  ? 0
+                  : calculateDeal(inputs).totalFinancingCost,
+              )} vs hard money.`
+            : `${local.loanLtcPct}% LTC · ${local.loanRatePct}% interest · ${local.loanPointsPct} pts`}
+        </p>
+      </div>
+
       <Slider
         label="Purchase price"
         value={local.purchasePrice}

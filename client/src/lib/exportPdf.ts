@@ -10,34 +10,54 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
   const M = 48; // page margin
   let y = M;
 
-  // ----- Color palette — navy + emerald to match the app -----
-  const navy: [number, number, number] = [22, 38, 60];
-  const emerald: [number, number, number] = [38, 153, 113];
+  // ----- Coastal Teal palette to match the app -----
+  const teal: [number, number, number] = [18, 109, 133]; // #126D85 brand
+  const tealAccent: [number, number, number] = [95, 212, 231]; // #5fd4e7
+  const ink: [number, number, number] = [10, 14, 18]; // #0a0e12
+  const positive: [number, number, number] = [22, 138, 100];
   const gray: [number, number, number] = [110, 119, 128];
   const lightGray: [number, number, number] = [232, 234, 237];
   const text: [number, number, number] = [22, 30, 42];
   const danger: [number, number, number] = [196, 64, 64];
 
   // ----- Header band -----
-  doc.setFillColor(...navy);
+  doc.setFillColor(...teal);
   doc.rect(0, 0, W, 80, "F");
 
-  // Logo mark (three rising bars)
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(M, 32, 10, 16, 2, 2, "F");
-  doc.roundedRect(M + 14, 24, 10, 24, 2, 2, "F");
-  doc.roundedRect(M + 28, 16, 10, 32, 2, 2, "F");
+  // Logo mark — house outline + small accent square (mirrors PropBoxIQ icon)
+  doc.setDrawColor(255, 255, 255);
+  doc.setLineWidth(2);
+  // House silhouette
+  const lx = M;
+  const ly = 18;
+  doc.lines(
+    [
+      [22, -16], // up-right roof
+      [22, 16], // down-right roof
+      [0, 28], // right wall
+      [-44, 0], // bottom
+      [0, -28], // left wall
+    ],
+    lx, ly + 16,
+    [1, 1],
+    "S"
+  );
+  // Accent square inside (the IQ box)
+  doc.setFillColor(...tealAccent);
+  doc.rect(lx + 14, ly + 18, 16, 16, "F");
+  doc.setLineWidth(1);
 
   doc.setFont("helvetica", "bold");
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(18);
-  doc.text("Flipline", M + 50, 40);
+  doc.text("PropBoxIQ", M + 56, 40);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  doc.setTextColor(200, 210, 225);
-  doc.text("Investor Deal Memo", M + 50, 56);
+  doc.setTextColor(...tealAccent);
+  doc.text("Investor Deal Memo", M + 56, 56);
 
   doc.setFontSize(9);
+  doc.setTextColor(220, 240, 245);
   doc.text(
     `Prepared ${new Date().toLocaleDateString("en-US", {
       year: "numeric",
@@ -80,17 +100,17 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
     {
       label: "Projected Net Profit",
       value: fmtUSD(r.netProfit),
-      color: profitable ? emerald : danger,
+      color: profitable ? positive : danger,
     },
     {
       label: "ROI on Cash",
       value: fmtPct(r.roiOnCash),
-      color: navy,
+      color: teal,
     },
     {
       label: "Annualized ROI",
       value: fmtPct(r.annualizedRoi),
-      color: navy,
+      color: teal,
     },
   ];
   kpis.forEach((k, i) => {
@@ -115,9 +135,9 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
   function sectionTitle(title: string, x: number, yy: number) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
-    doc.setTextColor(...navy);
+    doc.setTextColor(...teal);
     doc.text(title.toUpperCase(), x, yy);
-    doc.setDrawColor(...emerald);
+    doc.setDrawColor(...tealAccent);
     doc.setLineWidth(1.5);
     doc.line(x, yy + 4, x + 36, yy + 4);
     doc.setLineWidth(1);
@@ -179,7 +199,7 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
     lY,
     colW,
     true,
-    emerald
+    positive
   );
   lY += 14;
   row(
@@ -189,7 +209,7 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
     lY,
     colW,
     true,
-    profitable ? emerald : danger
+    profitable ? positive : danger
   );
 
   // Returns (right column)
@@ -221,7 +241,7 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
     rY,
     colW,
     true,
-    emerald
+    positive
   );
   rY += 14;
   row("Break-even ARV", fmtUSD(r.breakEvenArv), rX, rY, colW, true);
@@ -276,8 +296,327 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
     "This memo is a pro forma projection based on the inputs above. Actual results may vary materially. Not investment advice.";
   doc.text(disc, M, 770, { maxWidth: W - M * 2 });
 
-  const fname = `Flipline_${(deal.address || "deal")
+  const fname = `PropBoxIQ_${(deal.address || "deal")
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .slice(0, 40)}.pdf`;
+  doc.save(fname);
+}
+
+// ============================================================================
+// Comparison PDF — side-by-side table, up to 4 deals on one landscape page.
+// ============================================================================
+
+interface CompareDeal {
+  deal: Deal;
+  inputs: DealInputs;
+}
+
+export function exportComparePdf(items: CompareDeal[]) {
+  if (items.length === 0) return;
+  const slice = items.slice(0, 4); // landscape page fits 4 columns comfortably
+
+  // Landscape letter: 792 x 612
+  const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "landscape" });
+  const W = 792;
+  const H = 612;
+  const M = 48;
+
+  const teal: [number, number, number] = [18, 109, 133];
+  const tealAccent: [number, number, number] = [95, 212, 231];
+  const positive: [number, number, number] = [22, 138, 100];
+  const danger: [number, number, number] = [196, 64, 64];
+  const gray: [number, number, number] = [110, 119, 128];
+  const lightGray: [number, number, number] = [232, 234, 237];
+  const text: [number, number, number] = [22, 30, 42];
+
+  // ----- Header band -----
+  doc.setFillColor(...teal);
+  doc.rect(0, 0, W, 70, "F");
+
+  doc.setFillColor(...tealAccent);
+  doc.rect(M + 14, 32, 14, 14, "F");
+  doc.setDrawColor(255, 255, 255);
+  doc.setLineWidth(2);
+  doc.lines(
+    [[18, -14], [18, 14], [0, 24], [-36, 0], [0, -24]],
+    M, 32 + 14,
+    [1, 1],
+    "S"
+  );
+  doc.setLineWidth(1);
+
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16);
+  doc.text("PropBoxIQ", M + 50, 36);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(...tealAccent);
+  doc.text("Deal Comparison", M + 50, 50);
+
+  doc.setTextColor(220, 240, 245);
+  doc.text(
+    `Prepared ${new Date().toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    })}`,
+    W - M,
+    36,
+    { align: "right" }
+  );
+  doc.text(`${slice.length} deals`, W - M, 50, { align: "right" });
+
+  // ----- Pre-compute results for each deal -----
+  const computed = slice.map(({ deal, inputs }) => ({
+    deal,
+    inputs,
+    r: calculateDeal(inputs),
+  }));
+
+  // ----- Table layout -----
+  const labelColW = 170;
+  const dealColW = (W - M * 2 - labelColW) / slice.length;
+  let y = 100;
+
+  // Header row — addresses
+  doc.setFillColor(248, 250, 252);
+  doc.rect(M, y - 14, W - M * 2, 56, "F");
+  doc.setDrawColor(...lightGray);
+  doc.line(M, y + 42, W - M, y + 42);
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(...gray);
+  doc.text("PROPERTY", M + 8, y);
+
+  computed.forEach((c, i) => {
+    const x = M + labelColW + i * dealColW;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(...text);
+    const addrLines = doc.splitTextToSize(c.deal.address || "", dealColW - 10);
+    doc.text(addrLines.slice(0, 2), x + 6, y);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(...gray);
+    const sub = [c.deal.city, c.deal.state].filter(Boolean).join(", ");
+    if (sub) doc.text(sub, x + 6, y + 28);
+  });
+
+  y += 60;
+
+  // ----- Highlight winners per row -----
+  function bestIndex(values: number[], higherIsBetter = true): number {
+    let best = 0;
+    for (let i = 1; i < values.length; i++) {
+      if (
+        (higherIsBetter && values[i] > values[best]) ||
+        (!higherIsBetter && values[i] < values[best])
+      ) {
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  // Each row: label + array of values + which-is-best behavior
+  type RowDef = {
+    label: string;
+    values: string[];
+    raw: number[];
+    higherIsBetter: boolean;
+    isHero?: boolean;
+  };
+
+  const rows: RowDef[] = [
+    {
+      label: "Net Profit",
+      values: computed.map((c) => fmtUSD(c.r.netProfit)),
+      raw: computed.map((c) => c.r.netProfit),
+      higherIsBetter: true,
+      isHero: true,
+    },
+    {
+      label: "ROI on Cash",
+      values: computed.map((c) => fmtPct(c.r.roiOnCash)),
+      raw: computed.map((c) => c.r.roiOnCash),
+      higherIsBetter: true,
+      isHero: true,
+    },
+    {
+      label: "Annualized ROI",
+      values: computed.map((c) => fmtPct(c.r.annualizedRoi)),
+      raw: computed.map((c) => c.r.annualizedRoi),
+      higherIsBetter: true,
+      isHero: true,
+    },
+    {
+      label: "Profit Margin (% of ARV)",
+      values: computed.map((c) => fmtPct(c.r.profitMarginPct)),
+      raw: computed.map((c) => c.r.profitMarginPct),
+      higherIsBetter: true,
+    },
+    {
+      label: "ARV",
+      values: computed.map((c) => fmtUSD(c.inputs.arv)),
+      raw: computed.map((c) => c.inputs.arv),
+      higherIsBetter: true,
+    },
+    {
+      label: "Purchase Price",
+      values: computed.map((c) => fmtUSD(c.inputs.purchasePrice)),
+      raw: computed.map((c) => c.inputs.purchasePrice),
+      higherIsBetter: false,
+    },
+    {
+      label: "Max Allowable Offer",
+      values: computed.map((c) => fmtUSD(c.r.maxAllowableOffer)),
+      raw: computed.map((c) => c.r.maxAllowableOffer),
+      higherIsBetter: true,
+    },
+    {
+      label: "Rehab Budget",
+      values: computed.map((c) =>
+        fmtUSD(c.inputs.rehabBudget + c.r.rehabContingency)
+      ),
+      raw: computed.map(
+        (c) => c.inputs.rehabBudget + c.r.rehabContingency
+      ),
+      higherIsBetter: false,
+    },
+    {
+      label: "Hold (months)",
+      values: computed.map((c) => `${c.inputs.holdingMonths}`),
+      raw: computed.map((c) => c.inputs.holdingMonths),
+      higherIsBetter: false,
+    },
+    {
+      label: "Total Project Cost",
+      values: computed.map((c) => fmtUSD(c.r.totalProjectCost)),
+      raw: computed.map((c) => c.r.totalProjectCost),
+      higherIsBetter: false,
+    },
+    {
+      label: "Cash Invested",
+      values: computed.map((c) => fmtUSD(c.r.totalCashInvested)),
+      raw: computed.map((c) => c.r.totalCashInvested),
+      higherIsBetter: false,
+    },
+    {
+      label: "Loan Amount",
+      values: computed.map((c) => fmtUSD(c.r.loanAmount)),
+      raw: computed.map((c) => c.r.loanAmount),
+      higherIsBetter: false,
+    },
+    {
+      label: "Break-even ARV",
+      values: computed.map((c) => fmtUSD(c.r.breakEvenArv)),
+      raw: computed.map((c) => c.r.breakEvenArv),
+      higherIsBetter: false,
+    },
+  ];
+
+  // Render each row
+  rows.forEach((r) => {
+    const winner = bestIndex(r.raw, r.higherIsBetter);
+    const rowH = r.isHero ? 24 : 18;
+
+    if (r.isHero) {
+      doc.setFillColor(248, 250, 252);
+      doc.rect(M, y - 12, W - M * 2, rowH, "F");
+    }
+
+    // Label
+    doc.setFont("helvetica", r.isHero ? "bold" : "normal");
+    doc.setFontSize(r.isHero ? 10 : 9);
+    doc.setTextColor(...text);
+    doc.text(r.label, M + 8, y);
+
+    // Values
+    r.values.forEach((v, i) => {
+      const x = M + labelColW + i * dealColW;
+      const isWinner = i === winner && r.raw.length > 1;
+      const profitable =
+        r.label === "Net Profit" ? r.raw[i] >= 0 : true;
+
+      // Winner highlight pill
+      if (isWinner && r.isHero) {
+        doc.setFillColor(...tealAccent);
+        doc.roundedRect(
+          x + dealColW - 36,
+          y - 8,
+          28,
+          12,
+          3,
+          3,
+          "F"
+        );
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7);
+        doc.setTextColor(...teal);
+        doc.text("BEST", x + dealColW - 22, y, { align: "center" });
+      }
+
+      doc.setFont("helvetica", isWinner ? "bold" : "normal");
+      doc.setFontSize(r.isHero ? 11 : 10);
+      let color: [number, number, number] = text;
+      if (r.label === "Net Profit") {
+        color = profitable ? positive : danger;
+      } else if (isWinner && r.isHero) {
+        color = teal;
+      }
+      doc.setTextColor(...color);
+      doc.text(v, x + 6, y);
+    });
+
+    // Subtle separator
+    doc.setDrawColor(...lightGray);
+    doc.line(M, y + (r.isHero ? 12 : 8), W - M, y + (r.isHero ? 12 : 8));
+
+    y += rowH;
+  });
+
+  // ----- Verdict line -----
+  y += 16;
+  const profitWinner = bestIndex(
+    computed.map((c) => c.r.netProfit),
+    true
+  );
+  const roiWinner = bestIndex(
+    computed.map((c) => c.r.roiOnCash),
+    true
+  );
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(...teal);
+  doc.text("VERDICT", M, y);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(...text);
+  const profitAddr = computed[profitWinner].deal.address || `Deal ${profitWinner + 1}`;
+  const roiAddr = computed[roiWinner].deal.address || `Deal ${roiWinner + 1}`;
+  let verdict: string;
+  if (profitWinner === roiWinner) {
+    verdict = `${profitAddr} wins on both raw profit and return on cash.`;
+  } else {
+    verdict = `${profitAddr} delivers the highest dollar profit; ${roiAddr} delivers the strongest cash-on-cash return.`;
+  }
+  doc.text(doc.splitTextToSize(verdict, W - M * 2 - 80), M + 60, y);
+
+  // ----- Footer disclaimer -----
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(8);
+  doc.setTextColor(...gray);
+  doc.text(
+    "Pro forma projections based on user inputs. Actual results may vary materially. Not investment advice.",
+    M,
+    H - 24,
+    { maxWidth: W - M * 2 }
+  );
+
+  const fname = `PropBoxIQ_Compare_${slice.length}deals_${new Date()
+    .toISOString()
+    .slice(0, 10)}.pdf`;
   doc.save(fname);
 }

@@ -32,7 +32,9 @@ import {
   GitCompareArrows,
   Plus,
   Check,
+  FileDown,
 } from "lucide-react";
+import { exportComparePdf } from "@/lib/exportPdf";
 
 type SortKey = "newest" | "profit" | "roi" | "address";
 type ProfitFilter = "all" | "profitable" | "unprofitable";
@@ -451,14 +453,30 @@ export default function Deals() {
             <span className="text-sm text-muted-foreground">
               {selected.size} selected
             </span>
-            <Button
-              size="sm"
-              onClick={() => setShowCompare(true)}
-              disabled={selected.size < 2}
-              data-testid="button-open-compare"
-            >
-              Compare {selected.size} <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  exportComparePdf(
+                    selectedDeals.map((e) => ({ deal: e.deal, inputs: e.inputs })),
+                  )
+                }
+                disabled={selected.size < 2}
+                data-testid="button-export-compare-pdf"
+              >
+                <FileDown className="h-3.5 w-3.5 mr-1.5" />
+                Export PDF
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => setShowCompare(true)}
+                disabled={selected.size < 2}
+                data-testid="button-open-compare"
+              >
+                Compare {selected.size} <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -473,7 +491,22 @@ export default function Deals() {
           className="rounded-t-2xl max-h-[92dvh] overflow-y-auto"
         >
           <SheetHeader className="text-left mb-4">
-            <SheetTitle>Compare deals</SheetTitle>
+            <div className="flex items-center justify-between gap-3">
+              <SheetTitle>Compare deals</SheetTitle>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  exportComparePdf(
+                    selectedDeals.map((e) => ({ deal: e.deal, inputs: e.inputs })),
+                  )
+                }
+                data-testid="button-export-compare-pdf-drawer"
+              >
+                <FileDown className="h-3.5 w-3.5 mr-1.5" />
+                Export PDF
+              </Button>
+            </div>
           </SheetHeader>
           <CompareTable items={selectedDeals} navigate={navigate} />
         </SheetContent>
