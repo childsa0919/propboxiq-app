@@ -163,28 +163,41 @@ export default function Welcome() {
         </Link>
       </section>
 
-      {/* Saved deals */}
+      {/* Saved deals — show top 3 most recent only, link to /deals for full list */}
       {deals.length > 0 && (
         <section>
-          <div className="mb-4 flex items-end justify-between">
+          <div className="mb-4 flex items-end justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold tracking-tight">
                 Your saved deals
               </h2>
               <p className="text-sm text-muted-foreground">
-                {deals.length} {deals.length === 1 ? "deal" : "deals"} saved
+                {deals.length === 1
+                  ? "1 deal saved"
+                  : `${deals.length} deals saved · showing 3 most recent`}
               </p>
             </div>
+            <Link href="/deals" data-testid="link-see-all-deals">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 text-xs font-medium text-foreground hover:text-accent transition-colors"
+              >
+                See all <ArrowRight className="h-3 w-3" />
+              </button>
+            </Link>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {deals.map((d) => (
-              <DealCard
-                key={d.id}
-                deal={d}
-                onOpen={() => navigate(`/result/${d.id}`)}
-                onDelete={() => deleteDeal.mutate(d.id)}
-              />
-            ))}
+            {[...deals]
+              .sort((a, b) => b.updatedAt - a.updatedAt)
+              .slice(0, 3)
+              .map((d) => (
+                <DealCard
+                  key={d.id}
+                  deal={d}
+                  onOpen={() => navigate(`/result/${d.id}`)}
+                  onDelete={() => deleteDeal.mutate(d.id)}
+                />
+              ))}
           </div>
         </section>
       )}

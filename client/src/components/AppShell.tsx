@@ -18,6 +18,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { theme, toggle } = useTheme();
   const { user, signOut } = useAuth();
   const isHome = location === "/" || location === "";
+  const isDeals = location === "/deals";
 
   // Initials for the avatar
   const initials = (() => {
@@ -41,13 +42,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </span>
           </Link>
           <nav className="flex items-center gap-1">
-            {!isHome && (
-              <Link href="/">
-                <Button variant="ghost" size="sm" data-testid="link-deals">
-                  Deals
-                </Button>
-              </Link>
-            )}
+            <Link href="/deals">
+              <Button
+                variant={isDeals ? "secondary" : "ghost"}
+                size="sm"
+                data-testid="link-deals"
+              >
+                Deals
+              </Button>
+            </Link>
             <Button
               variant="ghost"
               size="icon"

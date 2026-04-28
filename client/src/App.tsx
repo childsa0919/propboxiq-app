@@ -14,6 +14,7 @@ import QuickWizard from "@/pages/QuickWizard";
 import QuickResult from "@/pages/QuickResult";
 import Detailed from "@/pages/Detailed";
 import DealPage from "@/pages/Deal";
+import Deals from "@/pages/Deals";
 import Login from "@/pages/Login";
 import { Loader2 } from "lucide-react";
 
@@ -25,6 +26,7 @@ function AppRouter() {
       <Route path="/result/:id" component={QuickResult} />
       <Route path="/detailed" component={Detailed} />
       <Route path="/deal/:id" component={DealPage} />
+      <Route path="/deals" component={Deals} />
       <Route component={NotFound} />
     </Switch>
   );
