@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AppShell } from "@/components/AppShell";
 import { AuthProvider, useAuth } from "@/components/AuthProvider";
+import { InstallPrompt } from "@/components/InstallPrompt";
 import NotFound from "@/pages/not-found";
 import Welcome from "@/pages/Welcome";
 import QuickWizard from "@/pages/QuickWizard";
@@ -68,6 +69,7 @@ function App() {
       <ThemeProvider>
         <TooltipProvider>
           <Toaster />
+          <InstallPrompt />
           <Router hook={useHashLocation}>
             {AUTH_ENABLED ? (
               <AuthProvider>
