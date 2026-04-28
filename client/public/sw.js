@@ -2,7 +2,7 @@
 // Network-first for navigation + API; cache-first for static assets.
 // Bumping CACHE_VERSION invalidates the old cache on next install.
 
-const CACHE_VERSION = "v9-2026-04-27-pdf-fixes";
+const CACHE_VERSION = "v10-2026-04-27-pdf-logo-black";
 const STATIC_CACHE = `propboxiq-static-${CACHE_VERSION}`;
 
 const PRECACHE_URLS = [

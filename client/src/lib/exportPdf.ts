@@ -144,19 +144,19 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
   doc.rect(0, 0, W, 80, "F");
 
   // ----- Logo: real PropBoxIQ plaid mark -----
-  // White inner accent so the mark reads cleanly against the dark teal band.
-  // Use white as the "ink" and tealAccent as the bright cell so the mark stays high-contrast on the band.
+  // PDF-only: all 4 cells BLACK (top-left keeps the house cutout knockout).
   drawPropBoxIQMark(
     doc,
     M - 6,
     8,
     64,
-    [255, 255, 255], // ink → white on teal band
-    tealAccent       // accent cell → light teal
+    ink,  // 3 cells → black
+    ink   // bottom-right cell → black
   );
 
+  // PropBoxIQ wordmark in black per spec; tagline keeps original light-teal accent
   doc.setFont("helvetica", "bold");
-  doc.setTextColor(255, 255, 255);
+  doc.setTextColor(...ink);
   doc.setFontSize(20);
   doc.text("PropBoxIQ", M + 70, 42);
   doc.setFont("helvetica", "normal");
@@ -511,18 +511,18 @@ export function exportComparePdf(items: CompareDeal[]) {
   doc.setFillColor(...teal);
   doc.rect(0, 0, W, 70, "F");
 
-  // Real PropBoxIQ plaid mark (white on teal band)
+  // PDF-only: all 4 cells black
   drawPropBoxIQMark(
     doc,
     M - 6,
     4,
     56,
-    [255, 255, 255],
-    tealAccent
+    [10, 14, 18], // 3 cells → black
+    [10, 14, 18]  // bottom-right cell → black
   );
 
   doc.setFont("helvetica", "bold");
-  doc.setTextColor(255, 255, 255);
+  doc.setTextColor(10, 14, 18);
   doc.setFontSize(16);
   doc.text("PropBoxIQ", M + 60, 36);
   doc.setFont("helvetica", "normal");
