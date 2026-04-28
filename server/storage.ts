@@ -66,6 +66,31 @@ try {
   console.warn("deals.user_id migration skipped:", e);
 }
 
+// One-time deal wipe — set WIPE_DEALS_ON_BOOT=1 in env. Idempotent guard:
+// after wiping, writes a marker row so subsequent restarts don't wipe again,
+// even if the env var is left set by mistake. To wipe again later, set the
+// env var AND delete the data.db file (or update the marker version).
+try {
+  if (process.env.WIPE_DEALS_ON_BOOT === "1") {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS _migrations (key TEXT PRIMARY KEY, ran_at INTEGER NOT NULL);`);
+    const marker = sqlite
+      .prepare("SELECT key FROM _migrations WHERE key = ?")
+      .get("wipe-deals-2026-04-27") as { key: string } | undefined;
+    if (!marker) {
+      const before = (sqlite.prepare("SELECT COUNT(*) as c FROM deals").get() as { c: number }).c;
+      sqlite.exec("DELETE FROM deals;");
+      sqlite
+        .prepare("INSERT INTO _migrations (key, ran_at) VALUES (?, ?)")
+        .run("wipe-deals-2026-04-27", Date.now());
+      console.log(`[storage] WIPE_DEALS_ON_BOOT: deleted ${before} deal(s); marker recorded.`);
+    } else {
+      console.log("[storage] WIPE_DEALS_ON_BOOT set but already ran (marker present); skipping.");
+    }
+  }
+} catch (e) {
+  console.warn("deals wipe skipped:", e);
+}
+
 // Bootstrap guest user (id=1) for use when auth is disabled. Idempotent.
 try {
   const now = Date.now();

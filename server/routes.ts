@@ -85,6 +85,154 @@ export async function registerRoutes(
     res.redirect(302, "/");
   });
 
+  // ----- Auth: Google OAuth start -----
+  // Redirects user to Google's consent screen.
+  app.get("/api/auth/google", async (req: Request, res: Response) => {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    if (!clientId) return res.status(500).send("GOOGLE_CLIENT_ID not configured");
+
+    const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
+    const host = req.headers["x-forwarded-host"] || req.headers.host;
+    const origin = process.env.PUBLIC_ORIGIN || `${proto}://${host}`;
+    const redirectUri =
+      process.env.GOOGLE_REDIRECT_URI || `${origin}/api/auth/google/callback`;
+
+    // CSRF state — short-lived, single-use, bound to a cookie
+    const state = newToken(24);
+    const stateParts = [
+      `pbq_oauth_state=${encodeURIComponent(state)}`,
+      "Path=/",
+      "HttpOnly",
+      "SameSite=Lax",
+      "Max-Age=600", // 10 min
+    ];
+    if (process.env.NODE_ENV === "production") stateParts.push("Secure");
+    res.setHeader("Set-Cookie", stateParts.join("; "));
+
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope: "openid email profile",
+      access_type: "online",
+      prompt: "select_account",
+      state,
+    });
+    res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+  });
+
+  // ----- Auth: Google OAuth callback -----
+  // Google sends the user back here with a one-time `code`. We exchange it for tokens,
+  // fetch the user's email/profile, upsert the user, set our session cookie, redirect home.
+  app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      return res.status(500).send("Google OAuth env vars missing");
+    }
+
+    const code = String(req.query.code ?? "");
+    const stateFromGoogle = String(req.query.state ?? "");
+    const errFromGoogle = req.query.error ? String(req.query.error) : null;
+    if (errFromGoogle) {
+      return res.status(400).send(
+        `<!doctype html><html><body style="font-family:system-ui;padding:48px;max-width:520px;margin:0 auto;color:#0a0e12;">
+        <h1 style="font-size:24px;">Google sign-in cancelled</h1>
+        <p style="color:#475569;">${errFromGoogle === "access_denied" ? "You declined access. Try again if you'd like to sign in." : `Google returned: ${errFromGoogle}`}</p>
+        <p style="margin-top:24px;"><a href="/" style="color:#126D85;font-weight:600;">&larr; Back to PropBoxIQ</a></p>
+        </body></html>`
+      );
+    }
+    if (!code) return res.status(400).send("Missing code");
+
+    // Verify state cookie
+    const rawCookie = req.headers.cookie ?? "";
+    const stateCookie = rawCookie
+      .split(";")
+      .map((p) => p.trim())
+      .find((p) => p.startsWith("pbq_oauth_state="));
+    const stateExpected = stateCookie
+      ? decodeURIComponent(stateCookie.slice("pbq_oauth_state=".length))
+      : null;
+    if (!stateExpected || stateExpected !== stateFromGoogle) {
+      return res.status(400).send("Invalid OAuth state");
+    }
+    // Clear the state cookie
+    const clearParts = ["pbq_oauth_state=", "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
+    if (process.env.NODE_ENV === "production") clearParts.push("Secure");
+
+    const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
+    const host = req.headers["x-forwarded-host"] || req.headers.host;
+    const origin = process.env.PUBLIC_ORIGIN || `${proto}://${host}`;
+    const redirectUri =
+      process.env.GOOGLE_REDIRECT_URI || `${origin}/api/auth/google/callback`;
+
+    try {
+      // Exchange code for tokens
+      const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: redirectUri,
+          grant_type: "authorization_code",
+        }),
+      });
+      if (!tokenResp.ok) {
+        const t = await tokenResp.text();
+        console.error("[google-oauth] token exchange failed", tokenResp.status, t);
+        return res.status(500).send("Google token exchange failed");
+      }
+      const tokens = (await tokenResp.json()) as {
+        access_token: string;
+        id_token?: string;
+      };
+
+      // Fetch profile from userinfo endpoint
+      const profileResp = await fetch(
+        "https://openidconnect.googleapis.com/v1/userinfo",
+        { headers: { Authorization: `Bearer ${tokens.access_token}` } }
+      );
+      if (!profileResp.ok) {
+        console.error("[google-oauth] userinfo failed", profileResp.status);
+        return res.status(500).send("Could not fetch Google profile");
+      }
+      const profile = (await profileResp.json()) as {
+        sub: string;
+        email?: string;
+        email_verified?: boolean;
+        name?: string;
+        picture?: string;
+      };
+      if (!profile.email) {
+        return res.status(400).send("Google account has no email on file");
+      }
+
+      const user = await storage.upsertUser(profile.email, profile.name ?? null);
+      await storage.touchLogin(user.id);
+      const sid = newToken(48);
+      await storage.createSession(sid, user.id, TIMINGS.SESSION_TTL_MS);
+
+      // Set both cookies (session + clear state) in one Set-Cookie header array
+      const isProd = process.env.NODE_ENV === "production";
+      const sessionParts = [
+        `pbq_session=${encodeURIComponent(sid)}`,
+        "Path=/",
+        "HttpOnly",
+        "SameSite=Lax",
+        `Max-Age=${Math.floor(TIMINGS.SESSION_TTL_MS / 1000)}`,
+      ];
+      if (isProd) sessionParts.push("Secure");
+      res.setHeader("Set-Cookie", [sessionParts.join("; "), clearParts.join("; ")]);
+      res.redirect(302, "/");
+    } catch (e: any) {
+      console.error("[google-oauth] callback error", e);
+      res.status(500).send("Google sign-in failed");
+    }
+  });
+
   // ----- Auth: who am I? -----
   app.get("/api/auth/me", async (req: Request, res: Response) => {
     const userId = (req as any).userId as number | undefined;

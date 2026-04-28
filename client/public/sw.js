@@ -2,7 +2,7 @@
 // Network-first for navigation + API; cache-first for static assets.
 // Bumping CACHE_VERSION invalidates the old cache on next install.
 
-const CACHE_VERSION = "v4-2026-04-27-rich-profile";
+const CACHE_VERSION = "v5-2026-04-27-google-auth";
 const STATIC_CACHE = `propboxiq-static-${CACHE_VERSION}`;
 
 const PRECACHE_URLS = [

@@ -63,7 +63,7 @@ function AuthGate() {
  * implementation is preserved (AuthProvider, AuthGate, Login page, server routes) —
  * to re-enable, flip AUTH_ENABLED to true and re-deploy.
  */
-const AUTH_ENABLED = false;
+const AUTH_ENABLED = true;
 
 function App() {
   return (
