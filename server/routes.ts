@@ -437,30 +437,38 @@ export async function registerRoutes(
       qualityMessage = `Search expanded to ${usedRadius} mi to find ${comps.length} comps. Closer comps weren't available.`;
     }
 
-    // ARV = median $/sqft × subject sqft. If subject sqft missing, fall back to median sale price.
-    const ppsfList = comps
+    // ARV strategy: take the 4 highest comps by total sale price, average their $/sqft,
+    // multiply by post-rehab target sqft (or subject sqft if no target). This anchors
+    // ARV on the strongest finished-product comps in the area — a flipper expects to
+    // sell at the top of the comp range after a quality rehab.
+    const mean = (arr: number[]) =>
+      arr.length === 0 ? 0 : Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
+
+    // Top 4 by sale price (descending). If <4 comps, use whatever we have.
+    const topComps = [...comps]
+      .sort((a, b) => b.price - a.price)
+      .slice(0, 4);
+
+    const topPpsfList = topComps
       .map((c) => c.pricePerSqft)
-      .filter((n): n is number => n != null)
-      .sort((a, b) => a - b);
-    const median = (arr: number[]) =>
-      arr.length === 0
-        ? 0
-        : arr.length % 2 === 1
-          ? arr[(arr.length - 1) / 2]
-          : Math.round((arr[arr.length / 2 - 1] + arr[arr.length / 2]) / 2);
+      .filter((n): n is number => n != null);
+    const meanTopPpsf = mean(topPpsfList);
+    const meanTopPrice = mean(topComps.map((c) => c.price));
 
-    const medianPpsf = median(ppsfList);
-    const prices = comps.map((c) => c.price).sort((a, b) => a - b);
-    const medianPrice = median(prices);
+    // Reference numbers for the response (across ALL comps, for context)
+    const medianPpsf = mean(
+      comps.map((c) => c.pricePerSqft).filter((n): n is number => n != null)
+    );
 
-    // ARV multiplies median $/sqft by the post-rehab target sqft when provided
+    // ARV multiplies mean(top-4 $/sqft) by the post-rehab target sqft when provided
     // (the buyer is buying the finished house, not the as-is footprint).
     const arvSqft = targetSqft ?? subjectSqft;
     let arv = 0;
-    if (arvSqft && medianPpsf) {
-      arv = Math.round(arvSqft * medianPpsf);
+    if (arvSqft && meanTopPpsf) {
+      arv = Math.round(arvSqft * meanTopPpsf);
     } else {
-      arv = medianPrice;
+      // Sqft missing on subject — fall back to mean of the top-4 sale prices directly
+      arv = meanTopPrice;
     }
 
     // Confidence band — ±10% if we have <6 comps, ±7% otherwise
@@ -482,6 +490,10 @@ export async function registerRoutes(
       arvLow,
       arvHigh,
       medianPricePerSqft: medianPpsf || null,
+      // ARV math transparency — surface the top-4 used and the $/sqft anchor
+      arvMethod: "top4-by-price-mean-ppsf",
+      arvAnchorPpsf: meanTopPpsf || null,
+      arvTopCompIds: topComps.map((c) => c.id),
       compCount: comps.length,
       radiusMiles: usedRadius,
       filters: {

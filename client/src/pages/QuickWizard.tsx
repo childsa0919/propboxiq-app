@@ -35,6 +35,9 @@ type CompsResponse = {
   arvLow: number;
   arvHigh: number;
   medianPricePerSqft: number | null;
+  arvMethod?: string;
+  arvAnchorPpsf?: number | null;
+  arvTopCompIds?: string[];
   compCount: number;
   radiusMiles: number | null;
   quality?: {

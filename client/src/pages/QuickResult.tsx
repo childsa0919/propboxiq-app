@@ -367,6 +367,9 @@ function parseSavedComps(notes: string | null): null | {
   arvLow: number;
   arvHigh: number;
   medianPricePerSqft: number | null;
+  arvMethod?: string;
+  arvAnchorPpsf?: number | null;
+  arvTopCompIds?: string[];
   compCount: number;
   radiusMiles: number | null;
   subject: { address: string; sqft: number | null };
@@ -467,44 +470,93 @@ function CompsSection({ notes }: { notes: string | null }) {
             value={`${fmtUSD(data.arvLow)} – ${fmtUSD(data.arvHigh)}`}
           />
           <CompStat
-            label="Median $/sqft"
+            label={data.arvAnchorPpsf ? "Top-4 $/sqft" : "Median $/sqft"}
             value={
-              data.medianPricePerSqft ? `$${data.medianPricePerSqft}` : "—"
+              data.arvAnchorPpsf
+                ? `$${data.arvAnchorPpsf}`
+                : data.medianPricePerSqft
+                  ? `$${data.medianPricePerSqft}`
+                  : "—"
             }
           />
         </div>
-        <ul className="divide-y divide-card-border border border-card-border rounded-lg overflow-hidden">
-          {data.comps.map((c) => (
-            <li key={c.id} className="px-4 py-3 flex items-center gap-3">
-              <HomeIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{c.address}</p>
-                <p className="text-[11px] text-muted-foreground">
-                  {c.sqft ? `${c.sqft.toLocaleString()} sqft` : "—"}
-                  {c.beds != null && c.baths != null
-                    ? ` · ${c.beds}bd/${c.baths}ba`
-                    : ""}
-                  {" · "}
-                  {c.distance.toFixed(2)} mi
-                  {" · "}
-                  {c.daysOld <= 1 ? "today" : `${c.daysOld}d ago`}
-                </p>
-              </div>
-              <div className="text-right shrink-0">
-                <p className="text-sm font-semibold tabular-nums">
-                  {fmtUSD(c.price)}
-                </p>
-                {c.pricePerSqft && (
-                  <p className="text-[11px] text-muted-foreground tabular-nums">
-                    ${c.pricePerSqft}/sqft
-                  </p>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
+        {(() => {
+          // Sort comps so the 4 used for ARV (highest sale prices) appear first.
+          const topIds = new Set(
+            data.arvTopCompIds && data.arvTopCompIds.length > 0
+              ? data.arvTopCompIds
+              : [...data.comps]
+                  .sort((a, b) => b.price - a.price)
+                  .slice(0, 4)
+                  .map((c) => c.id),
+          );
+          const sortedComps = [...data.comps].sort((a, b) => {
+            const aTop = topIds.has(a.id) ? 1 : 0;
+            const bTop = topIds.has(b.id) ? 1 : 0;
+            if (aTop !== bTop) return bTop - aTop;
+            return b.price - a.price;
+          });
+          return (
+            <ul className="divide-y divide-card-border border border-card-border rounded-lg overflow-hidden">
+              {sortedComps.map((c) => {
+                const isTop = topIds.has(c.id);
+                return (
+                  <li
+                    key={c.id}
+                    className={`px-4 py-3 flex items-center gap-3 ${
+                      isTop ? "bg-accent/5" : ""
+                    }`}
+                    data-testid={`comp-row-${c.id}`}
+                  >
+                    <HomeIcon
+                      className={`h-4 w-4 shrink-0 ${
+                        isTop ? "text-accent" : "text-muted-foreground"
+                      }`}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-medium truncate">
+                          {c.address}
+                        </p>
+                        {isTop && (
+                          <span className="text-[9px] font-bold uppercase tracking-[0.12em] bg-accent text-accent-foreground px-1.5 py-0.5 rounded">
+                            ARV
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        {c.sqft ? `${c.sqft.toLocaleString()} sqft` : "—"}
+                        {c.beds != null && c.baths != null
+                          ? ` · ${c.beds}bd/${c.baths}ba`
+                          : ""}
+                        {" · "}
+                        {c.distance.toFixed(2)} mi
+                        {" · "}
+                        {c.daysOld <= 1 ? "today" : `${c.daysOld}d ago`}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p
+                        className={`text-sm tabular-nums ${
+                          isTop ? "font-bold" : "font-semibold"
+                        }`}
+                      >
+                        {fmtUSD(c.price)}
+                      </p>
+                      {c.pricePerSqft && (
+                        <p className="text-[11px] text-muted-foreground tabular-nums">
+                          ${c.pricePerSqft}/sqft
+                        </p>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          );
+        })()}
         <p className="mt-3 text-[11px] text-muted-foreground">
-          Comps powered by RentCast · ±15% sqft, last 6 months, cascading radius.
+          ARV = mean $/sqft of the 4 highest-priced comps × subject sqft. ±15% sqft, last 6 months, cascading radius. Comps powered by RentCast.
         </p>
       </CardContent>
     </Card>
