@@ -177,7 +177,7 @@ function recomputeArvFromComps(
   };
 }
 
-export function exportDealPdf(deal: Deal, inputs: DealInputs) {
+function buildDealPdf(deal: Deal, inputs: DealInputs): { doc: jsPDF; filename: string } {
   const r = calculateDeal(inputs);
   const doc = new jsPDF({ unit: "pt", format: "letter" }); // 612 x 792
 
@@ -593,7 +593,20 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
   const fname = `PropBoxIQ_${(deal.name?.trim() || deal.address || "deal")
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .slice(0, 40)}.pdf`;
-  doc.save(fname);
+  return { doc, filename: fname };
+}
+
+export function exportDealPdf(deal: Deal, inputs: DealInputs) {
+  const { doc, filename } = buildDealPdf(deal, inputs);
+  doc.save(filename);
+}
+
+export async function exportDealPdfBlob(
+  deal: Deal,
+  inputs: DealInputs,
+): Promise<{ blob: Blob; base64: string; filename: string }> {
+  const { doc, filename } = buildDealPdf(deal, inputs);
+  return docToBlobAndBase64(doc, filename);
 }
 
 // ============================================================================
@@ -605,8 +618,8 @@ interface CompareDeal {
   inputs: DealInputs;
 }
 
-export function exportComparePdf(items: CompareDeal[]) {
-  if (items.length === 0) return;
+function buildComparePdf(items: CompareDeal[]): { doc: jsPDF; filename: string } | null {
+  if (items.length === 0) return null;
   const slice = items.slice(0, 4); // landscape page fits 4 columns comfortably
 
   // Landscape letter: 792 x 612
@@ -915,5 +928,37 @@ export function exportComparePdf(items: CompareDeal[]) {
   const fname = `PropBoxIQ_Compare_${slice.length}deals_${new Date()
     .toISOString()
     .slice(0, 10)}.pdf`;
-  doc.save(fname);
+  return { doc, filename: fname };
+}
+
+export function exportComparePdf(items: CompareDeal[]) {
+  const built = buildComparePdf(items);
+  if (!built) return;
+  built.doc.save(built.filename);
+}
+
+export async function exportComparePdfBlob(
+  items: CompareDeal[],
+): Promise<{ blob: Blob; base64: string; filename: string } | null> {
+  const built = buildComparePdf(items);
+  if (!built) return null;
+  return docToBlobAndBase64(built.doc, built.filename);
+}
+
+// ──────────────────────────────────────────────────────────────────────
+async function docToBlobAndBase64(
+  doc: jsPDF,
+  filename: string,
+): Promise<{ blob: Blob; base64: string; filename: string }> {
+  const arrayBuffer = doc.output("arraybuffer") as ArrayBuffer;
+  const blob = new Blob([arrayBuffer], { type: "application/pdf" });
+  const bytes = new Uint8Array(arrayBuffer);
+  let bin = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    const sub = bytes.subarray(i, i + chunk);
+    for (let j = 0; j < sub.length; j++) bin += String.fromCharCode(sub[j]);
+  }
+  const base64 = btoa(bin);
+  return { blob, base64, filename };
 }

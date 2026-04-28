@@ -20,7 +20,8 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { MoneyInput } from "@/components/MoneyInput";
 import { MapPreview } from "@/components/MapPreview";
 import { useToast } from "@/hooks/use-toast";
-import { exportDealPdf } from "@/lib/exportPdf";
+import { exportDealPdf, exportDealPdfBlob } from "@/lib/exportPdf";
+import { EmailPdfDialog } from "@/components/EmailPdfDialog";
 import {
   ArrowLeft,
   MapPin,
@@ -30,6 +31,7 @@ import {
   TrendingDown,
   Sliders,
   Building,
+  Mail,
 } from "lucide-react";
 
 export default function DealPage() {
@@ -52,6 +54,7 @@ export default function DealPage() {
     yearBuilt?: number | null;
   }>({});
   const [dirty, setDirty] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
 
   // Hydrate from server
   useEffect(() => {
@@ -149,6 +152,14 @@ export default function DealPage() {
           >
             <Download className="h-4 w-4 mr-2" />
             Export PDF
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setEmailOpen(true)}
+            data-testid="button-email-pdf"
+          >
+            <Mail className="h-4 w-4 mr-2" />
+            Email
           </Button>
           <Button
             onClick={() => saveMut.mutate()}
@@ -493,6 +504,22 @@ export default function DealPage() {
           <ResultsPanel inputs={inputs} />
         </div>
       </div>
+
+      <EmailPdfDialog
+        open={emailOpen}
+        onOpenChange={setEmailOpen}
+        getPdf={() => exportDealPdfBlob(deal, inputs)}
+        defaultSubject={`Deal memo: ${deal.name?.trim() || deal.address}`}
+        defaultMessage={[
+          `Sharing the deal memo for ${deal.address}.`,
+          ``,
+          `ARV: ${fmtUSD(inputs.arv)}`,
+          `Estimated profit: ${fmtUSD(results.netProfit)}`,
+          `ROI: ${fmtPct(results.roiOnCash)}`,
+          ``,
+          `Full breakdown attached.`,
+        ].join("\n")}
+      />
     </div>
   );
 }

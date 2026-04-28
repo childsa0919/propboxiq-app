@@ -37,6 +37,7 @@ import {
   Archive,
   ArchiveRestore,
   MoreVertical,
+  Mail,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -45,7 +46,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { exportComparePdf } from "@/lib/exportPdf";
+import { exportComparePdf, exportComparePdfBlob } from "@/lib/exportPdf";
+import { EmailPdfDialog } from "@/components/EmailPdfDialog";
 
 type SortKey = "newest" | "recent" | "profit" | "roi" | "address";
 type ArchiveTab = "active" | "archived";
@@ -85,6 +87,7 @@ export default function Deals() {
   const [compareMode, setCompareMode] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [showCompare, setShowCompare] = useState(false);
+  const [emailCompareOpen, setEmailCompareOpen] = useState(false);
 
   const deleteDeal = useMutation({
     mutationFn: async (id: number) => {
@@ -578,6 +581,16 @@ export default function Deals() {
               </Button>
               <Button
                 size="sm"
+                variant="outline"
+                onClick={() => setEmailCompareOpen(true)}
+                disabled={selected.size < 2}
+                data-testid="button-email-compare-pdf"
+              >
+                <Mail className="h-3.5 w-3.5 mr-1.5" />
+                Email
+              </Button>
+              <Button
+                size="sm"
                 onClick={() => setShowCompare(true)}
                 disabled={selected.size < 2}
                 data-testid="button-open-compare"
@@ -601,24 +614,56 @@ export default function Deals() {
           <SheetHeader className="text-left mb-4">
             <div className="flex items-center justify-between gap-3">
               <SheetTitle>Compare deals</SheetTitle>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  exportComparePdf(
-                    selectedDeals.map((e) => ({ deal: e.deal, inputs: e.inputs })),
-                  )
-                }
-                data-testid="button-export-compare-pdf-drawer"
-              >
-                <FileDown className="h-3.5 w-3.5 mr-1.5" />
-                Export PDF
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    exportComparePdf(
+                      selectedDeals.map((e) => ({ deal: e.deal, inputs: e.inputs })),
+                    )
+                  }
+                  data-testid="button-export-compare-pdf-drawer"
+                >
+                  <FileDown className="h-3.5 w-3.5 mr-1.5" />
+                  Export PDF
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEmailCompareOpen(true)}
+                  data-testid="button-email-compare-pdf-drawer"
+                >
+                  <Mail className="h-3.5 w-3.5 mr-1.5" />
+                  Email
+                </Button>
+              </div>
             </div>
           </SheetHeader>
           <CompareTable items={selectedDeals} navigate={navigate} />
         </SheetContent>
       </Sheet>
+
+      <EmailPdfDialog
+        open={emailCompareOpen}
+        onOpenChange={setEmailCompareOpen}
+        getPdf={() =>
+          exportComparePdfBlob(
+            selectedDeals.map((e) => ({ deal: e.deal, inputs: e.inputs })),
+          )
+        }
+        defaultSubject={`Deal comparison (${selectedDeals.length} deals)`}
+        defaultMessage={[
+          `Side-by-side comparison of ${selectedDeals.length} deals:`,
+          ``,
+          ...selectedDeals.slice(0, 4).map(
+            (e) =>
+              `• ${e.deal.name?.trim() || e.deal.address} — profit ${fmtUSD(e.results.netProfit)}`,
+          ),
+          ``,
+          `Full comparison attached.`,
+        ].join("\n")}
+      />
     </div>
   );
 }

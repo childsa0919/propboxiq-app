@@ -11,6 +11,7 @@ import {
   setSessionCookie,
   clearSessionCookie,
   sendMagicLinkEmail,
+  sendEmailWithAttachment,
   TIMINGS,
 } from "./auth";
 import {
@@ -1031,6 +1032,140 @@ export async function registerRoutes(
     const ok = await storage.deleteDeal(id, userId);
     if (!ok) return res.status(404).json({ error: "Not found" });
     res.status(204).end();
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // POST /api/email/deal-pdf  — email a generated deal PDF as attachment
+  // Auth-gated. Per-user rate limit: 20/hour.
+  // ──────────────────────────────────────────────────────────────────────
+  const EMAIL_RATE: Map<number, number[]> = new Map();
+  const EMAIL_LIMIT = 20;
+  const EMAIL_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+
+  function checkEmailRate(userId: number): { ok: boolean; retryInMin?: number } {
+    const now = Date.now();
+    const arr = (EMAIL_RATE.get(userId) ?? []).filter(
+      (t) => now - t < EMAIL_WINDOW_MS,
+    );
+    if (arr.length >= EMAIL_LIMIT) {
+      const earliest = arr[0];
+      const retryInMin = Math.max(
+        1,
+        Math.ceil((EMAIL_WINDOW_MS - (now - earliest)) / 60000),
+      );
+      EMAIL_RATE.set(userId, arr);
+      return { ok: false, retryInMin };
+    }
+    arr.push(now);
+    EMAIL_RATE.set(userId, arr);
+    return { ok: true };
+  }
+
+  function isLikelyEmail(s: unknown): s is string {
+    return typeof s === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+  }
+
+  function escapeHtml(s: string): string {
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  app.post("/api/email/deal-pdf", requireAuth, async (req, res) => {
+    const userId = (req as any).userId as number;
+    const {
+      to,
+      ccSelf,
+      subject,
+      message,
+      pdfBase64,
+      filename,
+    } = (req.body ?? {}) as {
+      to?: string;
+      ccSelf?: boolean;
+      subject?: string;
+      message?: string;
+      pdfBase64?: string;
+      filename?: string;
+    };
+
+    if (!isLikelyEmail(to)) {
+      return res.status(400).json({ ok: false, error: "Invalid recipient email" });
+    }
+    if (!subject || typeof subject !== "string" || subject.trim().length === 0) {
+      return res.status(400).json({ ok: false, error: "Subject required" });
+    }
+    if (
+      !pdfBase64 ||
+      typeof pdfBase64 !== "string" ||
+      pdfBase64.length < 100
+    ) {
+      return res.status(400).json({ ok: false, error: "Missing PDF" });
+    }
+    // Cap attachment at ~10MB raw (~14MB base64)
+    if (pdfBase64.length > 14 * 1024 * 1024) {
+      return res.status(413).json({ ok: false, error: "Attachment too large" });
+    }
+    const fname =
+      filename && /^[\w\-. ]+\.pdf$/i.test(filename)
+        ? filename
+        : "deal-memo.pdf";
+
+    const rate = checkEmailRate(userId);
+    if (!rate.ok) {
+      return res.status(429).json({
+        ok: false,
+        error: `Rate limit reached (${EMAIL_LIMIT}/hr). Try again in ${rate.retryInMin} min.`,
+      });
+    }
+
+    let cc: string | undefined;
+    let userEmail: string | undefined;
+    try {
+      const user = await storage.getUserById(userId);
+      userEmail = user?.email ?? undefined;
+      if (ccSelf && userEmail) cc = userEmail;
+    } catch {
+      /* non-fatal */
+    }
+
+    const safeMsg = escapeHtml((message ?? "").trim());
+    const html = `<!doctype html>
+<html><body style="margin:0;padding:0;background:#f6f8f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0a0e12;">
+  <div style="max-width:560px;margin:0 auto;padding:32px 24px;">
+    <div style="font-size:18px;font-weight:600;letter-spacing:-0.01em;margin-bottom:24px;">
+      PropBox<span style="color:#126D85">IQ</span>
+    </div>
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;">
+      <p style="margin:0 0 12px 0;font-size:14px;line-height:1.55;white-space:pre-wrap;">${safeMsg || "See attached deal memo."}</p>
+      <p style="margin:24px 0 0 0;font-size:12px;color:#6b7280;">Attached: ${escapeHtml(fname)}</p>
+    </div>
+    <p style="margin:24px 0 0 0;font-size:11px;color:#9ca3af;text-align:center;">Sent via PropBoxIQ${userEmail ? ` by ${escapeHtml(userEmail)}` : ""}</p>
+  </div>
+</body></html>`;
+    const text = `${(message ?? "").trim() || "See attached deal memo."}\n\nAttached: ${fname}\n\nSent via PropBoxIQ${userEmail ? ` by ${userEmail}` : ""}`;
+
+    const result = await sendEmailWithAttachment({
+      to: to.trim(),
+      cc,
+      replyTo: userEmail,
+      subject: subject.trim(),
+      html,
+      text,
+      attachment: {
+        filename: fname,
+        contentBase64: pdfBase64,
+        contentType: "application/pdf",
+      },
+    });
+
+    if (!result.ok) {
+      return res.status(502).json({ ok: false, error: result.error ?? "Send failed" });
+    }
+    return res.json({ ok: true });
   });
 
   return httpServer;

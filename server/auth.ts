@@ -133,6 +133,71 @@ export async function sendMagicLinkEmail(opts: {
   }
 }
 
+/**
+ * Generic email send via Resend with optional file attachment.
+ * Used for the user-initiated "Email Deal Memo" feature — the magic-link
+ * helper above stays specialized for sign-in emails.
+ *
+ * Returns { ok: true } when Resend accepts the request. When RESEND_API_KEY
+ * is missing we log and pretend it succeeded so local dev still works
+ * (mirrors the magic-link behavior so they're consistent in dev).
+ */
+export async function sendEmailWithAttachment(opts: {
+  to: string;
+  cc?: string;
+  replyTo?: string;
+  subject: string;
+  html: string;
+  text: string;
+  attachment: { filename: string; contentBase64: string; contentType?: string };
+}): Promise<{ ok: boolean; error?: string }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.warn(
+      "[email] RESEND_API_KEY missing — simulated send for",
+      opts.to,
+      `(subject: ${opts.subject})`,
+    );
+    return { ok: true };
+  }
+  try {
+    const body: Record<string, unknown> = {
+      from: RESEND_FROM,
+      to: [opts.to],
+      subject: opts.subject,
+      html: opts.html,
+      text: opts.text,
+      attachments: [
+        {
+          filename: opts.attachment.filename,
+          content: opts.attachment.contentBase64,
+          content_type: opts.attachment.contentType ?? "application/pdf",
+        },
+      ],
+    };
+    if (opts.cc) body.cc = [opts.cc];
+    if (opts.replyTo) body.reply_to = opts.replyTo;
+
+    const resp = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      console.error("[email] Resend error", resp.status, text);
+      return { ok: false, error: `Email send failed (${resp.status})` };
+    }
+    return { ok: true };
+  } catch (e: any) {
+    console.error("[email] Resend exception", e);
+    return { ok: false, error: e?.message ?? "Email send failed" };
+  }
+}
+
 function magicLinkHtml(link: string): string {
   return `<!doctype html>
 <html><body style="margin:0;padding:0;background:#f6f8f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0a0e12;">

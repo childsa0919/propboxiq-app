@@ -28,8 +28,10 @@ import {
   Eye,
   EyeOff,
   Pencil,
+  Mail,
 } from "lucide-react";
-import { exportDealPdf } from "@/lib/exportPdf";
+import { exportDealPdf, exportDealPdfBlob } from "@/lib/exportPdf";
+import { EmailPdfDialog } from "@/components/EmailPdfDialog";
 import { useState, useEffect, useRef } from "react";
 import CountUp from "react-countup";
 
@@ -69,6 +71,8 @@ export default function QuickResult() {
       queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
     },
   });
+
+  const [emailOpen, setEmailOpen] = useState(false);
 
   if (isLoading || !deal) {
     return (
@@ -360,8 +364,8 @@ export default function QuickResult() {
         </CardContent>
       </Card>
 
-      {/* Export to PDF */}
-      <div className="mt-8 flex justify-center">
+      {/* Export / Email PDF */}
+      <div className="mt-8 flex flex-wrap justify-center gap-2">
         <Button
           variant="outline"
           size="sm"
@@ -371,7 +375,32 @@ export default function QuickResult() {
           <FileDown className="h-4 w-4 mr-2" />
           Export PDF
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setEmailOpen(true)}
+          data-testid="button-email-pdf"
+        >
+          <Mail className="h-4 w-4 mr-2" />
+          Email
+        </Button>
       </div>
+
+      <EmailPdfDialog
+        open={emailOpen}
+        onOpenChange={setEmailOpen}
+        getPdf={() => exportDealPdfBlob(deal, inputs)}
+        defaultSubject={`Deal memo: ${deal.name?.trim() || deal.address}`}
+        defaultMessage={[
+          `Sharing the deal memo for ${deal.address}.`,
+          ``,
+          `ARV: ${fmtUSD(inputs.arv)}`,
+          `Estimated profit: ${fmtUSD(r.netProfit)}`,
+          `ROI: ${fmtPct(r.roiOnCash)}`,
+          ``,
+          `Full breakdown attached.`,
+        ].join("\n")}
+      />
 
       <p className="mt-6 text-center text-xs text-muted-foreground">
         Want full control over financing, holding costs, and sensitivity?{" "}
