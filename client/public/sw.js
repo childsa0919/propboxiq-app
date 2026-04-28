@@ -1,0 +1,82 @@
+// PropBoxIQ service worker
+// Network-first for navigation + API; cache-first for static assets.
+// Bumping CACHE_VERSION invalidates the old cache on next install.
+
+const CACHE_VERSION = "v1-2026-04-27";
+const STATIC_CACHE = `propboxiq-static-${CACHE_VERSION}`;
+
+const PRECACHE_URLS = [
+  "./",
+  "./index.html",
+  "./manifest.webmanifest",
+  "./favicon.svg",
+  "./favicon-32.png",
+  "./apple-touch-icon.png",
+  "./icon-192.png",
+  "./icon-512.png",
+];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches
+      .open(STATIC_CACHE)
+      .then((cache) =>
+        // Use addAll but tolerate failures (some URLs may not exist yet at install time)
+        Promise.allSettled(PRECACHE_URLS.map((url) => cache.add(url))),
+      )
+      .then(() => self.skipWaiting()),
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(
+          keys
+            .filter((k) => k.startsWith("propboxiq-") && k !== STATIC_CACHE)
+            .map((k) => caches.delete(k)),
+        ),
+      )
+      .then(() => self.clients.claim()),
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const { request } = event;
+  if (request.method !== "GET") return;
+
+  const url = new URL(request.url);
+
+  // Never intercept API calls — always go to network
+  if (url.pathname.startsWith("/api/")) return;
+
+  // Navigation requests: network-first, fallback to cached index.html (offline)
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request).catch(() =>
+        caches.match("./index.html").then((r) => r || Response.error()),
+      ),
+    );
+    return;
+  }
+
+  // Static assets: cache-first, then network, then write through
+  if (url.origin === self.location.origin) {
+    event.respondWith(
+      caches.match(request).then(
+        (cached) =>
+          cached ||
+          fetch(request).then((response) => {
+            // Only cache OK basic responses
+            if (response && response.ok && response.type === "basic") {
+              const clone = response.clone();
+              caches.open(STATIC_CACHE).then((cache) => cache.put(request, clone));
+            }
+            return response;
+          }),
+      ),
+    );
+  }
+});
