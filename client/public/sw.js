@@ -2,7 +2,7 @@
 // Network-first for navigation + API; cache-first for static assets.
 // Bumping CACHE_VERSION invalidates the old cache on next install.
 
-const CACHE_VERSION = "v1-2026-04-27";
+const CACHE_VERSION = "v2-2026-04-27-deals";
 const STATIC_CACHE = `propboxiq-static-${CACHE_VERSION}`;
 
 const PRECACHE_URLS = [
@@ -62,21 +62,23 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets: cache-first, then network, then write through
+  // Static assets: stale-while-revalidate so updates roll out without forcing a hard reload.
+  // Hashed assets in /assets/* are content-addressed, so a stale copy is still correct;
+  // the revalidation in the background ensures the next load gets the latest.
   if (url.origin === self.location.origin) {
     event.respondWith(
-      caches.match(request).then(
-        (cached) =>
-          cached ||
-          fetch(request).then((response) => {
-            // Only cache OK basic responses
+      caches.open(STATIC_CACHE).then(async (cache) => {
+        const cached = await cache.match(request);
+        const networkPromise = fetch(request)
+          .then((response) => {
             if (response && response.ok && response.type === "basic") {
-              const clone = response.clone();
-              caches.open(STATIC_CACHE).then((cache) => cache.put(request, clone));
+              cache.put(request, response.clone());
             }
             return response;
-          }),
-      ),
+          })
+          .catch(() => cached);
+        return cached || networkPromise;
+      }),
     );
   }
 });
