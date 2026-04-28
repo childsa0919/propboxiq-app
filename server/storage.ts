@@ -59,6 +59,10 @@ sqlite.exec(`
     year_built INTEGER,
     inputs TEXT NOT NULL,
     notes TEXT,
+    name TEXT,
+    pinned INTEGER DEFAULT 0,
+    archived INTEGER DEFAULT 0,
+    last_opened_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -72,6 +76,26 @@ try {
   }
 } catch (e) {
   console.warn("deals.user_id migration skipped:", e);
+}
+
+// v1.2.0 migration: add nickname / pinned / archived / last_opened_at columns.
+// Each ALTER is wrapped in its own try/catch so a partial upgrade still
+// completes the remaining columns on next boot.
+for (const [col, ddl] of [
+  ["name", "ALTER TABLE deals ADD COLUMN name TEXT;"],
+  ["pinned", "ALTER TABLE deals ADD COLUMN pinned INTEGER DEFAULT 0;"],
+  ["archived", "ALTER TABLE deals ADD COLUMN archived INTEGER DEFAULT 0;"],
+  ["last_opened_at", "ALTER TABLE deals ADD COLUMN last_opened_at INTEGER;"],
+] as const) {
+  try {
+    const cols = sqlite.prepare("PRAGMA table_info(deals)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === col)) {
+      sqlite.exec(ddl);
+      console.log(`[storage] migration: added deals.${col}`);
+    }
+  } catch (e) {
+    console.warn(`deals.${col} migration skipped:`, e);
+  }
 }
 
 // One-time deal wipe — set WIPE_DEALS_ON_BOOT=1 in env. Idempotent guard:
@@ -115,6 +139,7 @@ export interface IStorage {
   // Deals (scoped to user)
   listDeals(userId: number): Promise<Deal[]>;
   getDeal(id: number, userId: number): Promise<Deal | undefined>;
+  touchDeal(id: number, userId: number): Promise<void>;
   createDeal(userId: number, deal: InsertDeal): Promise<Deal>;
   updateDeal(id: number, userId: number, deal: Partial<InsertDeal>): Promise<Deal | undefined>;
   deleteDeal(id: number, userId: number): Promise<boolean>;
@@ -183,6 +208,15 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(deals.id, id), dealOwnership(userId)))
       .returning()
       .get();
+  }
+
+  /** Bumps last_opened_at without changing updated_at. Used on GET /api/deals/:id. */
+  async touchDeal(id: number, userId: number): Promise<void> {
+    db
+      .update(deals)
+      .set({ lastOpenedAt: Date.now() })
+      .where(and(eq(deals.id, id), dealOwnership(userId)))
+      .run();
   }
 
   async deleteDeal(id: number, userId: number): Promise<boolean> {

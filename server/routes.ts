@@ -997,6 +997,9 @@ export async function registerRoutes(
     const id = Number(req.params.id);
     const deal = await storage.getDeal(id, userId);
     if (!deal) return res.status(404).json({ error: "Not found" });
+    // Bump last_opened_at — fire-and-forget, doesn't affect the response payload.
+    // We don't await so a slow disk write can't block the GET.
+    void storage.touchDeal(id, userId).catch(() => {});
     res.json(deal);
   });
 

@@ -242,9 +242,20 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
   doc.setTextColor(...text);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
-  const addrLines = doc.splitTextToSize(deal.address, W - M * 2);
+  const headerTitle = (deal.name?.trim() || deal.address) as string;
+  const addrLines = doc.splitTextToSize(headerTitle, W - M * 2);
   doc.text(addrLines, M, y);
   y += addrLines.length * 18;
+
+  // If a custom name is set, drop the real address to a smaller subtitle
+  // so the PDF reader still has the unambiguous property identity.
+  if (deal.name?.trim() && deal.name.trim() !== deal.address) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(...gray);
+    doc.text(deal.address, M, y);
+    y += 14;
+  }
 
   if (deal.city && deal.state) {
     doc.setFont("helvetica", "normal");
@@ -579,7 +590,7 @@ export function exportDealPdf(deal: Deal, inputs: DealInputs) {
     "This memo is a pro forma projection based on the inputs above. Actual results may vary materially. Not investment advice.";
   doc.text(disc, M, 770, { maxWidth: W - M * 2 });
 
-  const fname = `PropBoxIQ_${(deal.address || "deal")
+  const fname = `PropBoxIQ_${(deal.name?.trim() || deal.address || "deal")
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .slice(0, 40)}.pdf`;
   doc.save(fname);
@@ -678,7 +689,10 @@ export function exportComparePdf(items: CompareDeal[]) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.setTextColor(...text);
-    const addrLines = doc.splitTextToSize(c.deal.address || "", dealColW - 10);
+    const addrLines = doc.splitTextToSize(
+      c.deal.name?.trim() || c.deal.address || "",
+      dealColW - 10,
+    );
     doc.text(addrLines.slice(0, 2), x + 6, y);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);

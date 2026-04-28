@@ -52,6 +52,14 @@ export const deals = sqliteTable("deals", {
   // Deal financial inputs (full input snapshot as JSON)
   inputs: text("inputs").notNull(),
   notes: text("notes"),
+  // User-editable nickname. Falls back to address when null/empty.
+  name: text("name"),
+  // User flags for organizing the deal list
+  pinned: integer("pinned", { mode: "boolean" }).default(false),
+  archived: integer("archived", { mode: "boolean" }).default(false),
+  // Tracks the last time the user opened/viewed this deal (vs updatedAt which
+  // bumps on every PATCH). Powers the "Recently viewed" sort.
+  lastOpenedAt: integer("last_opened_at"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });

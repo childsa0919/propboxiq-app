@@ -33,10 +33,22 @@ import {
   Plus,
   Check,
   FileDown,
+  Star,
+  Archive,
+  ArchiveRestore,
+  MoreVertical,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { exportComparePdf } from "@/lib/exportPdf";
 
-type SortKey = "newest" | "profit" | "roi" | "address";
+type SortKey = "newest" | "recent" | "profit" | "roi" | "address";
+type ArchiveTab = "active" | "archived";
 type ProfitFilter = "all" | "profitable" | "unprofitable";
 type DataFilter = "all" | "has-comps" | "missing-data";
 
@@ -67,6 +79,7 @@ export default function Deals() {
   const [sort, setSort] = useState<SortKey>("newest");
   const [profitFilter, setProfitFilter] = useState<ProfitFilter>("all");
   const [dataFilter, setDataFilter] = useState<DataFilter>("all");
+  const [archiveTab, setArchiveTab] = useState<ArchiveTab>("active");
 
   // Compare mode
   const [compareMode, setCompareMode] = useState(false);
@@ -80,6 +93,22 @@ export default function Deals() {
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["/api/deals"] }),
   });
+
+  const patchDeal = useMutation({
+    mutationFn: async (vars: { id: number; patch: Partial<Deal> }) => {
+      await apiRequest("PATCH", `/api/deals/${vars.id}`, vars.patch);
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["/api/deals"] }),
+  });
+
+  // Counts for tab badges. Computed off the raw `deals` array (pre-filter)
+  // so the badge always reflects the true totals.
+  const archivedCount = useMemo(
+    () => deals.filter((d) => d.archived).length,
+    [deals],
+  );
+  const activeCount = deals.length - archivedCount;
 
   const enriched: EnrichedDeal[] = useMemo(() => {
     return deals.map((d) => {
@@ -100,13 +129,18 @@ export default function Deals() {
   }, [deals]);
 
   const filtered: EnrichedDeal[] = useMemo(() => {
-    let list = enriched;
+    // Archive tab gate — always applied first.
+    let list =
+      archiveTab === "archived"
+        ? enriched.filter((e) => e.deal.archived)
+        : enriched.filter((e) => !e.deal.archived);
 
     // Search
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter((e) => {
         const hay = [
+          e.deal.name ?? "",
           e.deal.address,
           e.deal.city ?? "",
           e.deal.state ?? "",
@@ -138,6 +172,14 @@ export default function Deals() {
       case "newest":
         list.sort((a, b) => b.deal.updatedAt - a.deal.updatedAt);
         break;
+      case "recent":
+        // "Recently viewed" — falls back to updatedAt when never opened.
+        list.sort(
+          (a, b) =>
+            (b.deal.lastOpenedAt ?? b.deal.updatedAt) -
+            (a.deal.lastOpenedAt ?? a.deal.updatedAt),
+        );
+        break;
       case "profit":
         list.sort((a, b) => b.results.netProfit - a.results.netProfit);
         break;
@@ -152,8 +194,18 @@ export default function Deals() {
         );
         break;
     }
+
+    // Pinned deals always bubble to the top within the active tab. Skipped on
+    // the archived tab (archived + pinned isn't a meaningful combo).
+    if (archiveTab === "active") {
+      list.sort((a, b) => {
+        const ap = a.deal.pinned ? 1 : 0;
+        const bp = b.deal.pinned ? 1 : 0;
+        return bp - ap;
+      });
+    }
     return list;
-  }, [enriched, search, sort, profitFilter, dataFilter]);
+  }, [enriched, search, sort, profitFilter, dataFilter, archiveTab]);
 
   const activeFilterCount =
     (profitFilter !== "all" ? 1 : 0) + (dataFilter !== "all" ? 1 : 0);
@@ -258,6 +310,47 @@ export default function Deals() {
         </p>
       </header>
 
+      {/* Active / Archived tabs */}
+      {!compareMode && (
+        <div
+          className="mb-4 inline-flex rounded-lg border border-card-border bg-secondary/30 p-0.5"
+          role="tablist"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={archiveTab === "active"}
+            onClick={() => setArchiveTab("active")}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+              archiveTab === "active"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            data-testid="tab-active"
+          >
+            Active{activeCount > 0 && (
+              <span className="ml-1.5 text-[10px] opacity-70 tabular-nums">{activeCount}</span>
+            )}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={archiveTab === "archived"}
+            onClick={() => setArchiveTab("archived")}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+              archiveTab === "archived"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            data-testid="tab-archived"
+          >
+            Archived{archivedCount > 0 && (
+              <span className="ml-1.5 text-[10px] opacity-70 tabular-nums">{archivedCount}</span>
+            )}
+          </button>
+        </div>
+      )}
+
       {/* Search + sort + filters */}
       {!compareMode && (
         <div className="mb-5 space-y-2.5">
@@ -298,6 +391,9 @@ export default function Deals() {
               <SelectContent>
                 <SelectItem value="newest" data-testid="sort-newest">
                   Newest first
+                </SelectItem>
+                <SelectItem value="recent" data-testid="sort-recent">
+                  Recently viewed
                 </SelectItem>
                 <SelectItem value="profit" data-testid="sort-profit">
                   Biggest profit
@@ -441,6 +537,18 @@ export default function Deals() {
               onToggleSelect={() => toggleSelect(e.deal.id)}
               onOpen={() => navigate(`/result/${e.deal.id}`)}
               onDelete={() => deleteDeal.mutate(e.deal.id)}
+              onTogglePin={() =>
+                patchDeal.mutate({
+                  id: e.deal.id,
+                  patch: { pinned: !e.deal.pinned },
+                })
+              }
+              onToggleArchive={() =>
+                patchDeal.mutate({
+                  id: e.deal.id,
+                  patch: { archived: !e.deal.archived },
+                })
+              }
             />
           ))}
         </div>
@@ -522,6 +630,8 @@ function DealRow({
   onToggleSelect,
   onOpen,
   onDelete,
+  onTogglePin,
+  onToggleArchive,
 }: {
   enriched: EnrichedDeal;
   compareMode: boolean;
@@ -529,6 +639,8 @@ function DealRow({
   onToggleSelect: () => void;
   onOpen: () => void;
   onDelete: () => void;
+  onTogglePin: () => void;
+  onToggleArchive: () => void;
 }) {
   const { deal, inputs, results, profitable, hasNumbers } = enriched;
 
@@ -564,18 +676,32 @@ function DealRow({
               {selected && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
             </div>
           )}
-          <MapPin className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+          {deal.pinned ? (
+            <Star
+              className="h-4 w-4 mt-0.5 shrink-0 fill-amber-400 text-amber-400"
+              aria-label="Pinned"
+            />
+          ) : (
+            <MapPin className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+          )}
           <div className="flex-1 min-w-0">
             <p
               className="text-sm font-medium leading-snug line-clamp-2"
               data-testid={`text-address-${deal.id}`}
             >
-              {deal.address}
+              {deal.name?.trim() || deal.address}
             </p>
-            {deal.city && deal.state && (
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {deal.city}, {deal.state} {deal.zip}
+            {deal.name?.trim() ? (
+              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                {deal.address}
+                {deal.city ? ` · ${deal.city}, ${deal.state}` : ""}
               </p>
+            ) : (
+              deal.city && deal.state && (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {deal.city}, {deal.state} {deal.zip}
+                </p>
+              )
             )}
             {(deal.sqft || deal.beds != null || deal.baths != null) && (
               <p
@@ -593,17 +719,61 @@ function DealRow({
             )}
           </div>
           {!compareMode && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (confirm("Delete this deal?")) onDelete();
-              }}
-              className="opacity-60 sm:opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
-              aria-label="Delete deal"
-              data-testid={`button-delete-${deal.id}`}
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  onClick={(e) => e.stopPropagation()}
+                  className="shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
+                  aria-label="Deal actions"
+                  data-testid={`button-deal-menu-${deal.id}`}
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <DropdownMenuItem
+                  onClick={onTogglePin}
+                  data-testid={`menu-pin-${deal.id}`}
+                >
+                  <Star
+                    className={`h-4 w-4 mr-2 ${deal.pinned ? "fill-amber-400 text-amber-400" : ""}`}
+                  />
+                  {deal.pinned ? "Unpin" : "Pin to top"}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={onToggleArchive}
+                  data-testid={`menu-archive-${deal.id}`}
+                >
+                  {deal.archived ? (
+                    <>
+                      <ArchiveRestore className="h-4 w-4 mr-2" />
+                      Restore
+                    </>
+                  ) : (
+                    <>
+                      <Archive className="h-4 w-4 mr-2" />
+                      Archive
+                    </>
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => {
+                    if (confirm("Delete this deal? This cannot be undone.")) {
+                      onDelete();
+                    }
+                  }}
+                  className="text-destructive focus:text-destructive"
+                  data-testid={`menu-delete-${deal.id}`}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
 
@@ -858,7 +1028,7 @@ function CompareTable({
             data-testid={`compare-header-${e.deal.id}`}
           >
             <p className="text-[11px] font-semibold leading-tight line-clamp-2">
-              {e.deal.address}
+              {e.deal.name?.trim() || e.deal.address}
             </p>
             {e.deal.city && (
               <p className="text-[10px] text-muted-foreground mt-0.5 truncate">

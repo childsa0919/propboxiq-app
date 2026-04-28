@@ -27,9 +27,10 @@ import {
   FileDown,
   Eye,
   EyeOff,
+  Pencil,
 } from "lucide-react";
 import { exportDealPdf } from "@/lib/exportPdf";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import CountUp from "react-countup";
 
 export default function QuickResult() {
@@ -47,10 +48,19 @@ export default function QuickResult() {
   });
 
   const updateDeal = useMutation({
-    mutationFn: async (vars: { inputs?: DealInputs; notes?: string | null }) => {
+    mutationFn: async (vars: {
+      inputs?: DealInputs;
+      notes?: string | null;
+      name?: string | null;
+      pinned?: boolean;
+      archived?: boolean;
+    }) => {
       const body: Record<string, unknown> = {};
       if (vars.inputs !== undefined) body.inputs = JSON.stringify(vars.inputs);
       if (vars.notes !== undefined) body.notes = vars.notes;
+      if (vars.name !== undefined) body.name = vars.name;
+      if (vars.pinned !== undefined) body.pinned = vars.pinned;
+      if (vars.archived !== undefined) body.archived = vars.archived;
       const res = await apiRequest("PATCH", `/api/deals/${id}`, body);
       return res.json() as Promise<Deal>;
     },
@@ -105,13 +115,17 @@ export default function QuickResult() {
           <MapPin className="h-5 w-5 text-foreground" />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium leading-snug">{deal.address}</p>
-          {deal.city && (
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {deal.city}, {deal.state} {deal.zip}
-            </p>
-          )}
+          <DealNameEditor
+            currentName={deal.name ?? null}
+            fallback={deal.address}
+            isSaving={updateDeal.isPending}
+            onSave={(name) => updateDeal.mutate({ name })}
+          />
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {deal.city ? `${deal.address} · ${deal.city}, ${deal.state} ${deal.zip ?? ""}` : deal.address}
+          </p>
           {/* Property facts strip — shows what the analysis is built on */}
+          {/* (note: bare deal.city block removed; combined into the line above) */}
           {(deal.sqft || deal.beds != null || deal.baths != null || deal.yearBuilt) && (
             <div
               className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] tabular-nums"
@@ -799,6 +813,86 @@ function CompsSection({
         </p>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Inline-editable nickname for a deal. Click the title to edit; Enter / blur
+ * saves; Escape cancels. Empty string clears the nickname (falls back to address).
+ */
+function DealNameEditor({
+  currentName,
+  fallback,
+  isSaving,
+  onSave,
+}: {
+  currentName: string | null;
+  fallback: string;
+  isSaving: boolean;
+  onSave: (name: string | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(currentName ?? "");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const display = currentName?.trim() || fallback;
+
+  useEffect(() => {
+    setDraft(currentName ?? "");
+  }, [currentName]);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const next = draft.trim();
+    // Only persist if the value actually changed
+    if ((next || null) !== (currentName?.trim() || null)) {
+      onSave(next === "" ? null : next);
+    }
+  };
+  const cancel = () => {
+    setDraft(currentName ?? "");
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
+          }
+        }}
+        maxLength={120}
+        placeholder={fallback}
+        disabled={isSaving}
+        className="w-full bg-transparent border-b border-accent/60 text-sm font-medium leading-snug focus:outline-none focus:border-accent px-0 py-0.5"
+        data-testid="input-deal-name"
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      className="group inline-flex items-center gap-1.5 text-left max-w-full hover-elevate active-elevate-2 rounded -mx-1 px-1 py-0.5"
+      data-testid="button-edit-deal-name"
+      aria-label="Edit deal name"
+    >
+      <span className="text-sm font-medium leading-snug truncate">{display}</span>
+      <Pencil className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 shrink-0" />
+    </button>
   );
 }
 
