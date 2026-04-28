@@ -8,6 +8,7 @@ import { defaultDealInputs, type Deal, type DealInputs } from "@shared/schema";
 import { calculateDeal, fmtUSD, fmtPct } from "@/lib/calc";
 import { MapPreview } from "@/components/MapPreview";
 import { SiteIntelligence } from "@/components/SiteIntelligence";
+import { PropertyProfile } from "@/components/PropertyProfile";
 import {
   TrendingUp,
   TrendingDown,
@@ -286,6 +287,9 @@ export default function QuickResult() {
 
       {/* Comps used — only when an auto-comp pull was saved on the deal */}
       <CompsSection notes={deal.notes ?? null} />
+
+      {/* Full property profile — county, zoning, owner, sale history, rent estimate, market stats */}
+      <PropertyProfile address={deal.address} zip={deal.zip ?? null} />
 
       {/* Sources & uses + map (asymmetric: 3/5 + 2/5) */}
       <div className="grid gap-5 lg:grid-cols-5 mb-8">

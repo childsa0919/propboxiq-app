@@ -395,6 +395,209 @@ export async function registerRoutes(
     }
   });
 
+  // ----- Full property profile via RentCast -----
+  // Fans out to /properties, /avm/value, /avm/rent, /listings/sale, /listings/rental, /markets in parallel.
+  // Returns one normalized payload with everything the result page can show.
+  app.get("/api/property/full", async (req: Request, res: Response) => {
+    const address = String(req.query.address ?? "").trim();
+    const zip = String(req.query.zip ?? "").trim();
+    if (!address) return res.status(400).json({ error: "address required" });
+    const apiKey = process.env.RENTCAST_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "RentCast API key not configured" });
+    }
+    const headers = { "X-Api-Key": apiKey };
+    const enc = encodeURIComponent(address);
+
+    // Helper: fetch JSON and swallow 404s as null (so one missing source doesn't fail the whole call).
+    const safe = async <T,>(url: string): Promise<T | null> => {
+      try {
+        return (await fetchJson(url, { headers })) as T;
+      } catch {
+        return null;
+      }
+    };
+
+    const [property, rentAvm, saleListings, rentalListings, market] =
+      await Promise.all([
+        safe<any>(`https://api.rentcast.io/v1/properties?address=${enc}`),
+        safe<any>(
+          `https://api.rentcast.io/v1/avm/rent/long-term?address=${enc}`,
+        ),
+        safe<any>(`https://api.rentcast.io/v1/listings/sale?address=${enc}`),
+        safe<any>(
+          `https://api.rentcast.io/v1/listings/rental/long-term?address=${enc}`,
+        ),
+        zip
+          ? safe<any>(`https://api.rentcast.io/v1/markets?zipCode=${zip}`)
+          : Promise.resolve(null),
+      ]);
+
+    const p = Array.isArray(property) ? property[0] : property;
+    if (!p) return res.status(404).json({ error: "property not found" });
+
+    // Lot size in sqft → acres
+    const lotSqft = (p.lotSize as number | undefined) ?? null;
+    const lotAcres =
+      lotSqft && lotSqft > 0
+        ? Math.round((lotSqft / 43560) * 1000) / 1000
+        : null;
+
+    // Tax assessment + property tax — most recent year
+    const taxAssess: Record<string, any> = p.taxAssessments ?? {};
+    const propTax: Record<string, any> = p.propertyTaxes ?? {};
+    const assessYears = Object.keys(taxAssess).sort().reverse();
+    const taxYears = Object.keys(propTax).sort().reverse();
+    const latestAssess = assessYears[0] ? taxAssess[assessYears[0]] : null;
+    const latestTax = taxYears[0] ? propTax[taxYears[0]] : null;
+
+    // Sale history: combine RentCast "history" object + listings into a unified timeline
+    const saleHist: any[] = [];
+    if (Array.isArray(saleListings)) {
+      for (const l of saleListings) {
+        if (l?.history && typeof l.history === "object") {
+          for (const [date, evt] of Object.entries(l.history)) {
+            saleHist.push({
+              date,
+              event: (evt as any)?.event ?? "Sale Listing",
+              price: (evt as any)?.price ?? null,
+              listingType: (evt as any)?.listingType ?? null,
+              daysOnMarket: (evt as any)?.daysOnMarket ?? null,
+            });
+          }
+        } else {
+          saleHist.push({
+            date: l?.listedDate ?? l?.createdDate ?? null,
+            event: l?.status ?? "Sale Listing",
+            price: l?.price ?? null,
+            listingType: l?.listingType ?? null,
+            daysOnMarket: l?.daysOnMarket ?? null,
+            mlsNumber: l?.mlsNumber ?? null,
+          });
+        }
+      }
+      saleHist.sort((a, b) =>
+        String(b.date ?? "").localeCompare(String(a.date ?? "")),
+      );
+    }
+
+    // Rental history — same shape
+    const rentalHist: any[] = [];
+    if (Array.isArray(rentalListings)) {
+      for (const l of rentalListings) {
+        rentalHist.push({
+          date: l?.listedDate ?? l?.createdDate ?? null,
+          event: l?.status ?? "Rental Listing",
+          price: l?.price ?? null,
+          daysOnMarket: l?.daysOnMarket ?? null,
+        });
+      }
+      rentalHist.sort((a, b) =>
+        String(b.date ?? "").localeCompare(String(a.date ?? "")),
+      );
+    }
+
+    // Market stats — only the Single Family slice if present
+    let marketSlice: any = null;
+    if (market?.saleData) {
+      const saleAll = market.saleData;
+      const sfSlice = (saleAll.dataByPropertyType ?? []).find(
+        (s: any) => s.propertyType === "Single Family",
+      );
+      marketSlice = {
+        zip: market.zipCode ?? zip,
+        lastUpdated: saleAll.lastUpdatedDate ?? null,
+        all: {
+          medianPrice: saleAll.medianPrice ?? null,
+          medianPricePerSqft: saleAll.medianPricePerSquareFoot ?? null,
+          medianDom: saleAll.medianDaysOnMarket ?? null,
+          totalListings: saleAll.totalListings ?? null,
+          newListings: saleAll.newListings ?? null,
+        },
+        singleFamily: sfSlice
+          ? {
+              medianPrice: sfSlice.medianPrice ?? null,
+              medianPricePerSqft: sfSlice.medianPricePerSquareFoot ?? null,
+              medianDom: sfSlice.medianDaysOnMarket ?? null,
+              totalListings: sfSlice.totalListings ?? null,
+            }
+          : null,
+      };
+    }
+
+    res.json({
+      identity: {
+        address: p.formattedAddress ?? address,
+        county: p.county ?? null,
+        subdivision: p.subdivision ?? null,
+        zoning: p.zoning ?? null,
+        propertyType: p.propertyType ?? null,
+        assessorId: p.assessorID ?? null,
+      },
+      facts: {
+        sqft: p.squareFootage ?? null,
+        beds: p.bedrooms ?? null,
+        baths: p.bathrooms ?? null,
+        yearBuilt: p.yearBuilt ?? null,
+        lotSqft,
+        lotAcres,
+      },
+      features: {
+        architectureType: p.features?.architectureType ?? null,
+        floorCount: p.features?.floorCount ?? null,
+        exteriorType: p.features?.exteriorType ?? null,
+        roofType: p.features?.roofType ?? null,
+        cooling: p.features?.cooling ?? null,
+        coolingType: p.features?.coolingType ?? null,
+        heating: p.features?.heating ?? null,
+        heatingType: p.features?.heatingType ?? null,
+        garage: p.features?.garage ?? null,
+        garageType: p.features?.garageType ?? null,
+        fireplace: p.features?.fireplace ?? null,
+        pool: p.features?.pool ?? null,
+      },
+      taxes: {
+        latestAssessYear: assessYears[0] ?? null,
+        latestAssessValue: latestAssess?.value ?? null,
+        landValue: latestAssess?.land ?? null,
+        improvementsValue: latestAssess?.improvements ?? null,
+        latestTaxYear: taxYears[0] ?? null,
+        latestTaxAmount: latestTax?.total ?? null,
+        assessmentHistory: assessYears.map((y) => ({
+          year: Number(y),
+          value: taxAssess[y]?.value ?? null,
+        })),
+        taxHistory: taxYears.map((y) => ({
+          year: Number(y),
+          amount: propTax[y]?.total ?? null,
+        })),
+      },
+      owner: p.owner
+        ? {
+            names: p.owner.names ?? [],
+            type: p.owner.type ?? null,
+            ownerOccupied: p.ownerOccupied ?? null,
+            mailingAddress:
+              p.owner.mailingAddress?.formattedAddress ?? null,
+            absentee:
+              p.owner.mailingAddress?.formattedAddress &&
+              p.formattedAddress &&
+              p.owner.mailingAddress.formattedAddress !== p.formattedAddress,
+          }
+        : null,
+      rentEstimate: rentAvm
+        ? {
+            rent: rentAvm.rent ?? null,
+            rentLow: rentAvm.rentRangeLow ?? null,
+            rentHigh: rentAvm.rentRangeHigh ?? null,
+          }
+        : null,
+      saleHistory: saleHist,
+      rentalHistory: rentalHist,
+      market: marketSlice,
+    });
+  });
+
   // ----- Property details (best-effort via Nominatim + OSM) -----
   // The Census Geocoder does not return property attributes (beds/baths/sqft).
   // We attempt to enrich via Nominatim reverse geocoding for a tidy display address;
