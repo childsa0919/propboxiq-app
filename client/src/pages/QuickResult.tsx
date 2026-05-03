@@ -32,8 +32,18 @@ import {
 } from "lucide-react";
 import { exportDealPdf, exportDealPdfBlob } from "@/lib/exportPdf";
 import { EmailPdfDialog } from "@/components/EmailPdfDialog";
+import { DealCard } from "@/components/DealCard";
 import { useState, useEffect, useRef } from "react";
 import CountUp from "react-countup";
+
+// Direction A — derive a Deal Score (0–100) from the underwriting result.
+// Heuristic: weighted ROI on cash + margin + a hold penalty. Bounded 0–100.
+function computeDealScore(roi: number, marginPct: number, holdMonths: number) {
+  const roiPart = Math.max(0, Math.min(45, roi * 0.9));
+  const marginPart = Math.max(0, Math.min(45, marginPct * 1.4));
+  const holdPenalty = Math.max(0, (holdMonths - 6) * 1.5);
+  return Math.max(0, Math.min(100, Math.round(roiPart + marginPart + 10 - holdPenalty)));
+}
 
 export default function QuickResult() {
   const [, params] = useRoute("/result/:id");
@@ -186,7 +196,22 @@ export default function QuickResult() {
         </div>
       </div>
 
-      {/* Profit hero — ultra-modern: deep indigo, aurora glow, animated odometer */}
+      {/* Direction A — Deal Card summary (Coastal Teal). Displays the score
+          + four headline stats above the legacy profit hero. */}
+      <div className="mb-6">
+        <DealCard
+          score={computeDealScore(r.roiOnCash, r.profitMarginPct, inputs.holdingMonths)}
+          address={deal.address}
+          stats={[
+            { label: "ARV", value: fmtUSD(inputs.arv) },
+            { label: "ROI", value: fmtPct(r.roiOnCash) },
+            { label: "MARGIN", value: fmtPct(r.profitMarginPct) },
+            { label: "HOLD", value: `${inputs.holdingMonths} mo` },
+          ]}
+        />
+      </div>
+
+      {/* Profit hero — Coastal Teal: deep teal canvas, blueprint sheen, animated odometer */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -196,7 +221,7 @@ export default function QuickResult() {
         <Card
           className={`overflow-hidden border-0 relative ${
             profitable
-              ? "bg-[hsl(246_38%_8%)]"
+              ? "bg-[#072e3a]"
               : "bg-gradient-to-br from-destructive to-destructive/85"
           }`}
         >
