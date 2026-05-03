@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { isPreviewMode, PREVIEW_USER } from "@/lib/previewMode";
 
 export type CurrentUser = {
   id: number;
@@ -17,21 +18,31 @@ type Ctx = {
 const AuthContext = createContext<Ctx | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  // PREVIEW MODE: short-circuit auth with a hardcoded fake user.
+  const previewActive = isPreviewMode();
+
   const { data, isLoading } = useQuery<{ user: CurrentUser | null }>({
     queryKey: ["/api/auth/me"],
     staleTime: 1000 * 60 * 5,
+    enabled: !previewActive,
   });
 
-  const value: Ctx = {
-    user: data?.user ?? null,
-    isLoading,
-    signOut: async () => {
-      await apiRequest("POST", "/api/auth/logout");
-      // Wipe cached user + deals
-      queryClient.setQueryData(["/api/auth/me"], { user: null });
-      queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
-    },
-  };
+  const value: Ctx = previewActive
+    ? {
+        user: PREVIEW_USER,
+        isLoading: false,
+        signOut: async () => {},
+      }
+    : {
+        user: data?.user ?? null,
+        isLoading,
+        signOut: async () => {
+          await apiRequest("POST", "/api/auth/logout");
+          // Wipe cached user + deals
+          queryClient.setQueryData(["/api/auth/me"], { user: null });
+          queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
+        },
+      };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

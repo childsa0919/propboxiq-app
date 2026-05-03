@@ -13,12 +13,14 @@ import { Moon, Sun, LogOut, User as UserIcon } from "lucide-react";
 import { useTheme } from "./ThemeProvider";
 import { useAuth } from "./AuthProvider";
 import { BlueprintGrid } from "./BlueprintGrid";
+import { isPreviewMode } from "@/lib/previewMode";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { theme, toggle } = useTheme();
   const { user, signOut } = useAuth();
   const isDeals = location === "/deals";
+  const previewActive = isPreviewMode();
 
   // Initials for the avatar
   const initials = (() => {
@@ -38,6 +40,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <BlueprintGrid />
       </div>
 
+      {previewActive && (
+        <div
+          role="status"
+          className="relative z-50 w-full bg-amber-500 text-black text-center text-xs font-semibold tracking-wide py-1.5 px-3 shadow-sm"
+          data-testid="banner-preview-mode"
+        >
+          PREVIEW MODE — auth bypassed (info@propboxiq.com). Not a real session.
+        </div>
+      )}
       <header className="sticky top-0 z-40 border-b border-card-border bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 h-14 flex items-center justify-between">
           <Link

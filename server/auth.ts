@@ -62,6 +62,28 @@ export const AUTH_DISABLED = !authExplicitlyEnabled;
 export const GUEST_USER_ID = 1;
 
 /**
+ * PREVIEW MODE — temporary auth bypass for Render PR previews.
+ * Active when PREVIEW_MODE=1 in the server env. Treats every request as
+ * the dedicated preview user (info@propboxiq.com) so save/email/analyze
+ * still work without a real session. Production has neither this env var
+ * nor the client `?preview=1` flag.
+ *
+ * To revert: delete this PREVIEW MODE block, the `previewActive` branch
+ * in sessionMiddleware/requireAuth, and the client previewMode.ts file.
+ */
+export const PREVIEW_MODE =
+  process.env.PREVIEW_MODE === "1" || process.env.PREVIEW_MODE === "true";
+const PREVIEW_EMAIL = "info@propboxiq.com";
+const PREVIEW_NAME = "Preview User";
+let cachedPreviewUserId: number | null = null;
+async function getPreviewUserId(): Promise<number> {
+  if (cachedPreviewUserId !== null) return cachedPreviewUserId;
+  const u = await storage.upsertUser(PREVIEW_EMAIL, PREVIEW_NAME);
+  cachedPreviewUserId = u.id;
+  return u.id;
+}
+
+/**
  * Session middleware — attaches `req.userId` if a valid session cookie exists.
  * Does NOT block unauthenticated requests; route handlers decide.
  * When auth is disabled, attaches the shared guest user id.
@@ -69,6 +91,14 @@ export const GUEST_USER_ID = 1;
 export async function sessionMiddleware(req: Request, _res: Response, next: NextFunction) {
   if (AUTH_DISABLED) {
     (req as any).userId = GUEST_USER_ID;
+    return next();
+  }
+  if (PREVIEW_MODE) {
+    try {
+      (req as any).userId = await getPreviewUserId();
+    } catch (e) {
+      console.error("[preview] failed to resolve preview user", e);
+    }
     return next();
   }
   const sid = readSessionCookie(req);
@@ -81,7 +111,7 @@ export async function sessionMiddleware(req: Request, _res: Response, next: Next
 
 /** Use after sessionMiddleware. Returns 401 if not signed in. */
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  if (AUTH_DISABLED) return next();
+  if (AUTH_DISABLED || PREVIEW_MODE) return next();
   const userId = (req as any).userId as number | undefined;
   if (!userId) return res.status(401).json({ error: "Not authenticated" });
   next();
