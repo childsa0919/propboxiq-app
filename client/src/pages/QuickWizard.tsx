@@ -19,6 +19,7 @@ import { defaultDealInputs, type Deal } from "@shared/schema";
 
 export const HOLDING_PERIOD_OPTIONS = [3, 6, 9, 12, 18, 24] as const;
 export const DEFAULT_HOLDING_MONTHS = 6;
+export const DEFAULT_IS_CASH_PURCHASE = false;
 import {
   ArrowLeft,
   ArrowRight,
@@ -96,6 +97,12 @@ export default function QuickWizard() {
   // Resets to 6 on every fresh wizard load (no persistence).
   const [holdingMonths, setHoldingMonths] = useState<number>(
     DEFAULT_HOLDING_MONTHS,
+  );
+
+  // Cash vs Financed toggle — when true, calc zeros loan interest/points/fees.
+  // Resets to Financed (false) on every fresh wizard load (no persistence).
+  const [isCashPurchase, setIsCashPurchase] = useState<boolean>(
+    DEFAULT_IS_CASH_PURCHASE,
   );
 
   // Subject property facts fetched from RentCast right after address selection.
@@ -202,6 +209,7 @@ export default function QuickWizard() {
         rehabBudget: parseNumber(rehab),
         arv: parseNumber(arv),
         holdingMonths,
+        isCashPurchase,
         isTeardown,
         ...(subjectFacts?.lotSqft != null && subjectFacts.lotSqft > 0
           ? { lotSqft: subjectFacts.lotSqft }
@@ -386,6 +394,8 @@ export default function QuickWizard() {
                 onRehabChange={setRehab}
                 holdingMonths={holdingMonths}
                 onHoldingMonthsChange={setHoldingMonths}
+                isCashPurchase={isCashPurchase}
+                onIsCashPurchaseChange={setIsCashPurchase}
                 isTeardown={isTeardown}
                 onTeardownChange={setIsTeardown}
                 changingSpecs={changingSpecs}
@@ -936,6 +946,8 @@ function StepRehab({
   onRehabChange,
   holdingMonths,
   onHoldingMonthsChange,
+  isCashPurchase,
+  onIsCashPurchaseChange,
   isTeardown,
   onTeardownChange,
   changingSpecs,
@@ -952,6 +964,8 @@ function StepRehab({
   onRehabChange: (v: string) => void;
   holdingMonths: number;
   onHoldingMonthsChange: (v: number) => void;
+  isCashPurchase: boolean;
+  onIsCashPurchaseChange: (v: boolean) => void;
   isTeardown: boolean;
   onTeardownChange: (v: boolean) => void;
   changingSpecs: boolean;
@@ -1034,6 +1048,52 @@ function StepRehab({
         <p className="mt-1.5 text-[11px] text-muted-foreground/80">
           How long you'll own it before selling. Drives interest, taxes, and
           carrying costs.
+        </p>
+      </div>
+
+      {/* Financed vs Cash — drives whether loan interest/points/fees are zeroed */}
+      <div className="mt-7">
+        <div className="mono-eyebrow mb-2 text-[11px] tracking-[0.18em]">
+          Purchase Method
+        </div>
+        <div
+          className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-card/50 border border-card-border"
+          role="tablist"
+          aria-label="Purchase method"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!isCashPurchase}
+            onClick={() => onIsCashPurchaseChange(false)}
+            data-testid="button-purchase-financed"
+            className={`py-2.5 rounded-lg text-sm font-medium transition-colors tabular-nums ${
+              !isCashPurchase
+                ? "bg-accent text-accent-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Financed
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={isCashPurchase}
+            onClick={() => onIsCashPurchaseChange(true)}
+            data-testid="button-purchase-cash"
+            className={`py-2.5 rounded-lg text-sm font-medium transition-colors tabular-nums ${
+              isCashPurchase
+                ? "bg-accent text-accent-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Cash
+          </button>
+        </div>
+        <p className="mt-1.5 text-[11px] text-muted-foreground/80">
+          {isCashPurchase
+            ? "All-cash buy — no interest, points, or loan fees. Taxes, insurance, and carrying costs still apply."
+            : "Financed via hard money — includes interest, points, and loan fees over the hold."}
         </p>
       </div>
 

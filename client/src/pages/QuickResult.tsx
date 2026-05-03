@@ -204,32 +204,87 @@ export default function QuickResult() {
         </div>
       </div>
 
-      {/* Inline holding period control — drives recalc of score + stats */}
-      <div className="mb-3 flex items-center justify-end gap-3">
-        <span className="mono-eyebrow text-[11px] tracking-[0.18em]">
-          Holding Period
-        </span>
-        <Select
-          value={String(inputs.holdingMonths)}
-          onValueChange={(v) =>
-            updateDeal.mutate({ inputs: { ...inputs, holdingMonths: Number(v) } })
-          }
-          disabled={updateDeal.isPending}
-        >
-          <SelectTrigger
-            className="h-9 w-[140px] rounded-lg border-card-border bg-background/50 focus:ring-accent focus:ring-offset-0 focus:border-accent text-sm font-medium tabular-nums"
-            data-testid="select-holding-months"
+      {/* Inline financial-modeling controls — drive recalc of score + stats */}
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+        {/* Financed | Cash segmented control */}
+        <div className="flex items-center gap-2">
+          <span className="mono-eyebrow text-[11px] tracking-[0.18em]">
+            Purchase
+          </span>
+          <div
+            className="inline-flex p-1 rounded-lg bg-card/50 border border-card-border"
+            role="tablist"
+            aria-label="Purchase method"
           >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {HOLDING_PERIOD_OPTIONS.map((m) => (
-              <SelectItem key={m} value={String(m)}>
-                {m} months
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!inputs.isCashPurchase}
+              onClick={() =>
+                updateDeal.mutate({
+                  inputs: { ...inputs, isCashPurchase: false },
+                })
+              }
+              disabled={updateDeal.isPending}
+              data-testid="button-purchase-financed"
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors tabular-nums ${
+                !inputs.isCashPurchase
+                  ? "bg-accent text-accent-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Financed
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!!inputs.isCashPurchase}
+              onClick={() =>
+                updateDeal.mutate({
+                  inputs: { ...inputs, isCashPurchase: true },
+                })
+              }
+              disabled={updateDeal.isPending}
+              data-testid="button-purchase-cash"
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors tabular-nums ${
+                inputs.isCashPurchase
+                  ? "bg-accent text-accent-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Cash
+            </button>
+          </div>
+        </div>
+
+        {/* Holding period dropdown */}
+        <div className="flex items-center gap-2">
+          <span className="mono-eyebrow text-[11px] tracking-[0.18em]">
+            Holding Period
+          </span>
+          <Select
+            value={String(inputs.holdingMonths)}
+            onValueChange={(v) =>
+              updateDeal.mutate({ inputs: { ...inputs, holdingMonths: Number(v) } })
+            }
+            disabled={updateDeal.isPending}
+          >
+            <SelectTrigger
+              className="h-9 w-[140px] rounded-lg border-card-border bg-background/50 focus:ring-accent focus:ring-offset-0 focus:border-accent text-sm font-medium tabular-nums"
+              data-testid="select-holding-months"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {HOLDING_PERIOD_OPTIONS.map((m) => (
+                <SelectItem key={m} value={String(m)}>
+                  {m} months
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         {updateDeal.isPending && (
           <span
             className="text-[11px] text-muted-foreground"
