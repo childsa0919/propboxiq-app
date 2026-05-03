@@ -19,6 +19,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { theme, toggle } = useTheme();
   const { user, signOut } = useAuth();
   const isDeals = location === "/deals";
+  // Routes that render their own fixed bottom CTA — hide the global footer on
+  // mobile so it doesn't overlap the button. (Footer still shows on >= sm.)
+  const hideFooterOnMobile = location === "/quick";
 
   // Initials for the avatar
   const initials = (() => {
@@ -128,7 +131,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
       <main className="relative z-10 flex-1">{children}</main>
-      <footer className="relative z-10 border-t border-card-border py-6 text-xs text-muted-foreground">
+      <footer
+        className={`relative z-10 border-t border-card-border py-6 text-xs text-muted-foreground ${
+          hideFooterOnMobile ? "hidden sm:block" : ""
+        }`}
+      >
         <div className="mx-auto max-w-6xl px-4 sm:px-6 flex flex-wrap items-center justify-between gap-2">
           <span>PropBoxIQ · Smart flip analysis</span>
           <span>

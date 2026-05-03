@@ -322,7 +322,12 @@ export default function QuickWizard() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-10 pb-32">
+    <div
+      className="mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-10"
+      style={{
+        paddingBottom: "calc(8rem + env(safe-area-inset-bottom, 0px))",
+      }}
+    >
       {/* Header: back + step indicator (mono eyebrow style) */}
       <div className="flex items-center justify-between mb-6">
         <Button
@@ -482,7 +487,12 @@ export default function QuickWizard() {
       </div>
 
       {/* Fixed Continue CTA at bottom (matches mock) */}
-      <div className="fixed bottom-0 inset-x-0 z-30 px-4 sm:px-6 pb-5 pt-4 bg-gradient-to-t from-background via-background/95 to-transparent">
+      <div
+        className="fixed bottom-0 inset-x-0 z-50 px-4 sm:px-6 pt-4 bg-gradient-to-t from-background via-background/95 to-transparent"
+        style={{
+          paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom, 0px))",
+        }}
+      >
         <div className="mx-auto max-w-2xl">
           <Button
             size="lg"
