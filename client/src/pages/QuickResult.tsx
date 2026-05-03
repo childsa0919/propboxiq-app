@@ -3,8 +3,16 @@ import { useRoute, useLocation, Link } from "wouter";
 import { motion } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { defaultDealInputs, type Deal, type DealInputs } from "@shared/schema";
+import { HOLDING_PERIOD_OPTIONS } from "./QuickWizard";
 import { calculateDeal, fmtUSD, fmtPct } from "@/lib/calc";
 import { MapPreview } from "@/components/MapPreview";
 import { SiteIntelligence } from "@/components/SiteIntelligence";
@@ -32,8 +40,18 @@ import {
 } from "lucide-react";
 import { exportDealPdf, exportDealPdfBlob } from "@/lib/exportPdf";
 import { EmailPdfDialog } from "@/components/EmailPdfDialog";
+import { DealCard } from "@/components/DealCard";
 import { useState, useEffect, useRef } from "react";
 import CountUp from "react-countup";
+
+// Direction A — derive a Deal Score (0–100) from the underwriting result.
+// Heuristic: weighted ROI on cash + margin + a hold penalty. Bounded 0–100.
+function computeDealScore(roi: number, marginPct: number, holdMonths: number) {
+  const roiPart = Math.max(0, Math.min(45, roi * 0.9));
+  const marginPart = Math.max(0, Math.min(45, marginPct * 1.4));
+  const holdPenalty = Math.max(0, (holdMonths - 6) * 1.5);
+  return Math.max(0, Math.min(100, Math.round(roiPart + marginPart + 10 - holdPenalty)));
+}
 
 export default function QuickResult() {
   const [, params] = useRoute("/result/:id");
@@ -186,7 +204,113 @@ export default function QuickResult() {
         </div>
       </div>
 
-      {/* Profit hero — ultra-modern: deep indigo, aurora glow, animated odometer */}
+      {/* Inline financial-modeling controls — drive recalc of score + stats */}
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+        {/* Financed | Cash segmented control */}
+        <div className="flex items-center gap-2">
+          <span className="mono-eyebrow text-[11px] tracking-[0.18em]">
+            Purchase
+          </span>
+          <div
+            className="inline-flex p-1 rounded-lg bg-card/50 border border-card-border"
+            role="tablist"
+            aria-label="Purchase method"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!inputs.isCashPurchase}
+              onClick={() =>
+                updateDeal.mutate({
+                  inputs: { ...inputs, isCashPurchase: false },
+                })
+              }
+              disabled={updateDeal.isPending}
+              data-testid="button-purchase-financed"
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors tabular-nums ${
+                !inputs.isCashPurchase
+                  ? "bg-accent text-accent-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Financed
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!!inputs.isCashPurchase}
+              onClick={() =>
+                updateDeal.mutate({
+                  inputs: { ...inputs, isCashPurchase: true },
+                })
+              }
+              disabled={updateDeal.isPending}
+              data-testid="button-purchase-cash"
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors tabular-nums ${
+                inputs.isCashPurchase
+                  ? "bg-accent text-accent-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Cash
+            </button>
+          </div>
+        </div>
+
+        {/* Holding period dropdown */}
+        <div className="flex items-center gap-2">
+          <span className="mono-eyebrow text-[11px] tracking-[0.18em]">
+            Holding Period
+          </span>
+          <Select
+            value={String(inputs.holdingMonths)}
+            onValueChange={(v) =>
+              updateDeal.mutate({ inputs: { ...inputs, holdingMonths: Number(v) } })
+            }
+            disabled={updateDeal.isPending}
+          >
+            <SelectTrigger
+              className="h-9 w-[140px] rounded-lg border-card-border bg-background/50 focus:ring-accent focus:ring-offset-0 focus:border-accent text-sm font-medium tabular-nums"
+              data-testid="select-holding-months"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {HOLDING_PERIOD_OPTIONS.map((m) => (
+                <SelectItem key={m} value={String(m)}>
+                  {m} months
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {updateDeal.isPending && (
+          <span
+            className="text-[11px] text-muted-foreground"
+            data-testid="text-holding-recalc"
+          >
+            Recalculating…
+          </span>
+        )}
+      </div>
+
+      {/* Direction A — Deal Card summary (Coastal Teal). Displays the score
+          + four headline stats above the legacy profit hero. */}
+      <div className="mb-6">
+        <DealCard
+          score={computeDealScore(r.roiOnCash, r.profitMarginPct, inputs.holdingMonths)}
+          address={deal.address}
+          stats={[
+            { label: "ARV", value: fmtUSD(inputs.arv) },
+            { label: "ROI", value: fmtPct(r.roiOnCash) },
+            { label: "MARGIN", value: fmtPct(r.profitMarginPct) },
+            { label: "HOLD", value: `${inputs.holdingMonths} mo` },
+          ]}
+        />
+      </div>
+
+      {/* Profit hero — Coastal Teal: deep teal canvas, blueprint sheen, animated odometer */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -196,7 +320,7 @@ export default function QuickResult() {
         <Card
           className={`overflow-hidden border-0 relative ${
             profitable
-              ? "bg-[hsl(246_38%_8%)]"
+              ? "bg-[#072e3a]"
               : "bg-gradient-to-br from-destructive to-destructive/85"
           }`}
         >
@@ -302,7 +426,7 @@ export default function QuickResult() {
           icon={<Calendar className="h-4 w-4" />}
           label="Hold period"
           value={`${inputs.holdingMonths} mo`}
-          hint="Default — adjust in Detailed mode"
+          hint="Adjust above or in Detailed mode"
         />
       </div>
 

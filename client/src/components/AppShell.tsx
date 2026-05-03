@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Logo } from "./Logo";
+import { Logo, Wordmark } from "./Logo";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -12,12 +12,12 @@ import {
 import { Moon, Sun, LogOut, User as UserIcon } from "lucide-react";
 import { useTheme } from "./ThemeProvider";
 import { useAuth } from "./AuthProvider";
+import { BlueprintGrid } from "./BlueprintGrid";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { theme, toggle } = useTheme();
   const { user, signOut } = useAuth();
-  const isHome = location === "/" || location === "";
   const isDeals = location === "/deals";
 
   // Initials for the avatar
@@ -28,18 +28,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   })();
 
   return (
-    <div className="min-h-dvh flex flex-col bg-background text-foreground">
+    <div className="relative min-h-dvh flex flex-col text-foreground">
+      {/* Direction A blueprint grid — sits behind everything, picks up its
+          stroke + opacity from CSS tokens so light/dark just work. */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 z-0 overflow-hidden"
+      >
+        <BlueprintGrid />
+      </div>
+
       <header className="sticky top-0 z-40 border-b border-card-border bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 h-14 flex items-center justify-between">
           <Link
             href="/"
-            className="flex items-center gap-2 text-foreground hover-elevate rounded-md px-2 py-1 -mx-2"
+            className="flex items-center gap-2 hover-elevate rounded-md px-2 py-1 -mx-2"
             data-testid="link-home"
           >
             <Logo size={26} />
-            <span className="font-display font-bold tracking-tight text-[15px]">
-              PropBox<span style={{ color: "#126D85" }}>IQ</span>
-            </span>
+            <Wordmark size={15} />
           </Link>
           <nav className="flex items-center gap-1">
             <Link href="/deals">
@@ -75,9 +82,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <button
                     type="button"
                     className="ml-1 inline-flex h-8 w-8 items-center justify-center rounded-full
-                               bg-[hsl(192_76%_30%)] text-white text-xs font-semibold
+                               bg-primary text-primary-foreground text-xs font-semibold
                                hover:opacity-90 transition-opacity
-                               ring-1 ring-[hsl(192_76%_30%/0.30)]"
+                               ring-1 ring-primary/30"
                     aria-label="Account menu"
                     data-testid="button-user-menu"
                   >
@@ -120,8 +127,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
         </div>
       </header>
-      <main className="flex-1">{children}</main>
-      <footer className="border-t border-card-border py-6 text-xs text-muted-foreground">
+      <main className="relative z-10 flex-1">{children}</main>
+      <footer className="relative z-10 border-t border-card-border py-6 text-xs text-muted-foreground">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 flex flex-wrap items-center justify-between gap-2">
           <span>PropBoxIQ · Smart flip analysis</span>
           <span>

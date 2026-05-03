@@ -2,10 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
-/* LIGHT MODE — PropBoxIQ refined-fintech palette.
-   White surfaces, near-black type, hairline cool-gray borders, single confident
-   blue accent. Tuned for Zillow/YouTube/Facebook familiarity with sharper edges. */
+/* PropBoxIQ — Direction A: Coastal Teal
+   Tokens lifted directly from /redesign-mocks/tokens/tokens.py +
+   /redesign-mocks/BUILD-SPEC.md. Keep light tokens close to existing
+   refined-fintech palette (--primary 192 76% 30% = #126D85), and replace
+   the off-brand purple dark tokens with Coastal Teal.
+
+   Brand constants (--brand-*) are theme-invariant and consumed by hand-built
+   redesign components (Logo, BlueprintGrid, DealCard) that need exact values.
+
+   The Tailwind shadcn variables (--background, --primary, etc.) below pick up
+   the right palette per theme so existing utilities (bg-background, text-foreground,
+   text-accent, etc.) automatically re-tint without page-level rewrites. */
 :root {
+  /* ---------- Coastal Teal brand constants (theme-invariant) ---------- */
+  --brand-teal: #126D85;
+  --brand-teal-ink: #0a4555;
+  --brand-teal-deep: #072e3a;
+  --brand-cyan: #5fd4e7;
+  --brand-cyan-bright: #7be3f0;
+  --brand-ink: #0a0e12;
+  --brand-success: #1aa84a;
+  --brand-warn: #f59e0b;
+  --brand-danger: #dc2626;
+
+  /* Grid tokens — read by <BlueprintGrid /> */
+  --grid-stroke: var(--brand-teal);
+  --grid-opacity: 0.10;
+
+  /* ---------- shadcn / Tailwind variables (LIGHT) ---------- */
   --button-outline: rgba(15, 23, 42, 0.08);
   --badge-outline: rgba(15, 23, 42, 0.06);
   --opaque-button-border-intensity: -8;
@@ -69,85 +94,92 @@
     from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 
-  /* Fallback for older browsers */
   --sidebar-accent-border: hsl(var(--sidebar-accent));
   --sidebar-accent-border: hsl(
     from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 
-  /* Fallback for older browsers */
   --primary-border: hsl(var(--primary));
   --primary-border: hsl(
     from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 
-  /* Fallback for older browsers */
   --secondary-border: hsl(var(--secondary));
   --secondary-border: hsl(
     from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 
-  /* Fallback for older browsers */
   --muted-border: hsl(var(--muted));
   --muted-border: hsl(
     from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 
-  /* Fallback for older browsers */
   --accent-border: hsl(var(--accent));
   --accent-border: hsl(
     from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 
-  /* Fallback for older browsers */
   --destructive-border: hsl(var(--destructive));
   --destructive-border: hsl(
     from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 }
 
+/* ---------- DARK THEME — Coastal Teal ----------
+   Replaces the off-brand purple with the deep teal canvas + cyan accents
+   from propboxiq.com. Hue 192 = brand teal, hue 187 ≈ cyan accent. */
 .dark {
-  --button-outline: rgba(255, 255, 255, 0.1);
+  --button-outline: rgba(255, 255, 255, 0.10);
   --badge-outline: rgba(255, 255, 255, 0.05);
   --opaque-button-border-intensity: 9;
   --elevate-1: rgba(255, 255, 255, 0.04);
   --elevate-2: rgba(255, 255, 255, 0.09);
-  --background: 246 35% 8%;
-  --foreground: 38 30% 95%;
-  --border: 246 22% 18%;
-  --card: 246 32% 11%;
-  --card-foreground: 38 30% 95%;
-  --card-border: 246 22% 16%;
-  --sidebar: 246 38% 6%;
-  --sidebar-foreground: 38 25% 90%;
-  --sidebar-border: 246 25% 14%;
-  --sidebar-primary: 35 92% 60%;
-  --sidebar-primary-foreground: 246 38% 8%;
-  --sidebar-accent: 246 25% 14%;
-  --sidebar-accent-foreground: 38 25% 90%;
-  --sidebar-ring: 35 92% 60%;
-  --popover: 246 32% 11%;
-  --popover-foreground: 38 30% 95%;
-  --popover-border: 246 22% 16%;
-  --primary: 38 30% 95%;
-  --primary-foreground: 246 32% 11%;
-  --secondary: 246 22% 16%;
-  --secondary-foreground: 38 30% 95%;
-  --muted: 246 22% 14%;
-  --muted-foreground: 246 12% 62%;
-  --accent: 35 92% 60%;
-  --accent-foreground: 246 38% 8%;
+
+  /* Background = #072e3a (brand-teal-deep). HSL: 195 78% 13%. */
+  --background: 195 78% 13%;
+  /* Foreground = #ffffff */
+  --foreground: 0 0% 100%;
+  /* Border = rgba(255,255,255,0.14) — but shadcn vars need an HSL.
+     We approximate with a desaturated white at low lightness so tailwind
+     `border-border` reads similar; components that need true alpha use
+     --brand-* directly. */
+  --border: 195 30% 28%;
+  /* Card surface = subtle lighter teal (#0d3a48 ish) for panels that need fill */
+  --card: 195 60% 16%;
+  --card-foreground: 0 0% 100%;
+  --card-border: 195 30% 28%;
+  --sidebar: 195 78% 10%;
+  --sidebar-foreground: 0 0% 96%;
+  --sidebar-border: 195 30% 22%;
+  --sidebar-primary: 187 76% 71%;          /* cyan-bright */
+  --sidebar-primary-foreground: 195 78% 13%;
+  --sidebar-accent: 195 30% 22%;
+  --sidebar-accent-foreground: 0 0% 96%;
+  --sidebar-ring: 187 76% 71%;
+  --popover: 195 60% 16%;
+  --popover-foreground: 0 0% 100%;
+  --popover-border: 195 30% 28%;
+  /* Primary CTAs on dark = cyan-bright #7be3f0, with deep-teal text */
+  --primary: 187 76% 71%;
+  --primary-foreground: 195 78% 13%;
+  --secondary: 195 30% 22%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 195 30% 18%;
+  --muted-foreground: 195 18% 70%;
+  /* Accent on dark = cyan #5fd4e7 (hue 188 70% 64%) */
+  --accent: 188 70% 64%;
+  --accent-foreground: 195 78% 13%;
   --destructive: 0 70% 58%;
   --destructive-foreground: 0 0% 100%;
-  --input: 246 22% 22%;
-  --ring: 35 92% 60%;
-  --chart-1: 246 70% 70%;
-  --chart-2: 158 60% 55%;
-  --chart-3: 35 92% 62%;
+  --input: 195 30% 24%;
+  --ring: 187 76% 71%;
+  --chart-1: 188 70% 64%;
+  --chart-2: 142 60% 55%;
+  --chart-3: 187 76% 71%;
   --chart-4: 0 70% 62%;
-  --chart-5: 246 18% 70%;
-  --success: 158 60% 55%;
-  --success-foreground: 246 38% 8%;
+  --chart-5: 195 18% 70%;
+  --success: 138 73% 38%;
+  --success-foreground: 0 0% 100%;
   --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0);
   --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0);
   --shadow-sm: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
@@ -157,43 +189,41 @@
   --shadow-xl: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 8px 10px -1px hsl(0 0% 0% / 0);
   --shadow-2xl: 0px 2px 0px 0px hsl(0 0% 0% / 0);
 
+  /* Grid tokens override for dark */
+  --grid-stroke: var(--brand-cyan);
+  --grid-opacity: 0.22;
+
   /* Fallback for older browsers */
   --sidebar-primary-border: hsl(var(--sidebar-primary));
   --sidebar-primary-border: hsl(
     from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 
-  /* Fallback for older browsers */
   --sidebar-accent-border: hsl(var(--sidebar-accent));
   --sidebar-accent-border: hsl(
     from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 
-  /* Fallback for older browsers */
   --primary-border: hsl(var(--primary));
   --primary-border: hsl(
     from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 
-  /* Fallback for older browsers */
   --secondary-border: hsl(var(--secondary));
   --secondary-border: hsl(
     from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 
-  /* Fallback for older browsers */
   --muted-border: hsl(var(--muted));
   --muted-border: hsl(
     from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 
-  /* Fallback for older browsers */
   --accent-border: hsl(var(--accent));
   --accent-border: hsl(
     from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 
-  /* Fallback for older browsers */
   --destructive-border: hsl(var(--destructive));
   --destructive-border: hsl(
     from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
@@ -211,6 +241,22 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+
+  /* Coastal Teal canvas gradient — applied to the document so every screen
+     gets the immersive teal wash on dark, and a soft teal-tinted off-white
+     gradient on light. */
+  html.dark body {
+    background:
+      linear-gradient(180deg, var(--brand-teal-ink) 0%, var(--brand-teal) 60%, var(--brand-teal-deep) 100%)
+      fixed;
+    color: #ffffff;
+  }
+  html:not(.dark) body {
+    background:
+      linear-gradient(180deg, #ffffff 0%, #eaf3f6 60%, #dbe9ee 100%)
+      fixed;
+  }
+
   .tabular-nums {
     font-variant-numeric: tabular-nums lining-nums;
   }
@@ -218,8 +264,7 @@
     font-family: var(--font-display);
     letter-spacing: -0.025em;
   }
-  /* Aurora atmosphere — ultra-low-opacity radial color blobs that
-     sit behind the profit hero. Pure CSS, no extra DOM nodes. */
+  /* Aurora atmosphere — used by older hero block (kept for backwards compat). */
   .aurora-hero {
     position: relative;
     isolation: isolate;
@@ -237,7 +282,6 @@
     opacity: 0.9;
     pointer-events: none;
   }
-  /* Conic gradient ring used on the hero card for an ultra-modern accent. */
   .conic-ring {
     background: conic-gradient(
       from 220deg at 50% 50%,
@@ -247,85 +291,83 @@
       hsl(192 76% 35%)
     );
   }
-  /* Hairline grid overlay for the hero — subtle architectural texture. */
   .grid-overlay {
     background-image:
       linear-gradient(to right, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
       linear-gradient(to bottom, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
     background-size: 32px 32px;
   }
+
+  /* ---------- Mono eyebrow utility (Direction A) ---------- */
+  .mono-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    font-weight: 500;
+    color: var(--brand-teal);
+  }
+  html.dark .mono-eyebrow {
+    color: var(--brand-cyan-bright);
+  }
+
+  /* ---------- Glass card utility (Direction A Deal Card) ---------- */
+  .glass-card {
+    background: linear-gradient(155deg, rgba(255,255,255,0.96), rgba(255,255,255,0.82));
+    border: 1px solid rgba(18,109,133,0.16);
+    border-radius: 18px;
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    box-shadow:
+      0 10px 30px rgba(10,14,18,0.08),
+      inset 0 1px 0 rgba(255,255,255,1);
+  }
+  html.dark .glass-card {
+    background: linear-gradient(155deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06));
+    border: 1px solid rgba(255,255,255,0.22);
+    box-shadow:
+      0 10px 40px rgba(0,0,0,0.30),
+      inset 0 1px 0 rgba(255,255,255,0.18),
+      0 0 60px rgba(95,212,231,0.18);
+  }
 }
 
-/**
- * Using the elevate system.
- * Automatic contrast adjustment.
- *
- * <element className="hover-elevate" />
- * <element className="active-elevate-2" />
- *
- * // Using the tailwind utility when a data attribute is "on"
- * <element className="toggle-elevate data-[state=on]:toggle-elevated" />
- * // Or manually controlling the toggle state
- * <element className="toggle-elevate toggle-elevated" />
- *
- * Elevation systems have to handle many states.
- * - not-hovered, vs. hovered vs. active  (three mutually exclusive states)
- * - toggled or not
- * - focused or not (this is not handled with these utilities)
- *
- * Even without handling focused or not, this is six possible combinations that
- * need to be distinguished from eachother visually.
- */
 @layer utilities {
   /* Hide ugly search cancel button in Chrome until we can style it properly */
   input[type='search']::-webkit-search-cancel-button {
     @apply hidden;
   }
 
-  /* Placeholder styling for contentEditable div */
   [contenteditable][data-placeholder]:empty::before {
     content: attr(data-placeholder);
     color: hsl(var(--muted-foreground));
     pointer-events: none;
   }
 
-  /* .no-default-hover-elevate/no-default-active-elevate is an escape hatch so consumers of
-   * buttons/badges can remove the automatic brightness adjustment on interactions
-   * and program their own. */
   .no-default-hover-elevate {
   }
 
   .no-default-active-elevate {
   }
 
-  /**
-   * Toggleable backgrounds go behind the content. Hoverable/active goes on top.
-   * This way they can stack/compound. Both will overlap the parent's borders!
-   * So borders will be automatically adjusted both on toggle, and hover/active,
-   * and they will be compounded.
-   */
   .toggle-elevate::before,
   .toggle-elevate-2::before {
     content: '';
     pointer-events: none;
     position: absolute;
     inset: 0px;
-    /*border-radius: inherit;   match rounded corners */
     border-radius: inherit;
     z-index: -1;
-    /* sits behind content but above backdrop */
   }
 
   .toggle-elevate.toggle-elevated::before {
     background-color: var(--elevate-2);
   }
 
-  /* If there's a 1px border, adjust the inset so that it covers that parent's border */
   .border.toggle-elevate::before {
     inset: -1px;
   }
 
-  /* Does not work on elements with overflow:hidden! */
   .hover-elevate:not(.no-default-hover-elevate),
   .active-elevate:not(.no-default-active-elevate),
   .hover-elevate-2:not(.no-default-hover-elevate),
@@ -342,10 +384,8 @@
     pointer-events: none;
     position: absolute;
     inset: 0px;
-    /*border-radius: inherit;   match rounded corners */
     border-radius: inherit;
     z-index: 999;
-    /* sits in front of content */
   }
 
   .hover-elevate:hover:not(.no-default-hover-elevate)::after,
@@ -358,7 +398,6 @@
     background-color: var(--elevate-2);
   }
 
-  /* If there's a 1px border, adjust the inset so that it covers that parent's border */
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after,
   .border.active-elevate:not(.no-active-interaction-elevate)::after,
   .border.hover-elevate-2:not(.no-hover-interaction-elevate)::after,

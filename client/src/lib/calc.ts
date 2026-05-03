@@ -46,9 +46,11 @@ export function calculateDeal(i: DealInputs, locale?: LocaleHint): DealResults &
   const totalRehab = i.rehabBudget + rehabContingency;
 
   // Financing: hard money sized as % of loan-to-cost (purchase + rehab).
+  // isCashPurchase short-circuits to all-cash regardless of financingType
+  // (Quick wizard toggle; detailed mode still uses financingType).
+  const isCash = i.isCashPurchase === true || i.financingType === "cash";
   const ltcBasis = i.purchasePrice + totalRehab;
-  const loanAmount =
-    i.financingType === "hard_money" ? ltcBasis * pct(i.loanLtcPct) : 0;
+  const loanAmount = isCash ? 0 : ltcBasis * pct(i.loanLtcPct);
 
   // Locale-aware closing costs (when state provided), else fall back to flat %.
   const closingCosts = locale?.state
@@ -59,14 +61,15 @@ export function calculateDeal(i: DealInputs, locale?: LocaleHint): DealResults &
   // Cash needed at acquisition: down payment portion of purchase + buy closing
   // (hard money typically funds purchase + rehab; we approximate the down
   //  as ltcBasis - loanAmount, treating rehab as later draws covered by the loan).
-  const cashDownAtPurchase = Math.max(0, ltcBasis - loanAmount) + buyClosing + i.loanFees;
+  const loanFeesEff = isCash ? 0 : i.loanFees;
+  const cashDownAtPurchase = Math.max(0, ltcBasis - loanAmount) + buyClosing + loanFeesEff;
 
   const loanPoints = loanAmount * pct(i.loanPointsPct);
   // Simple interest for hold period; conservative assumption that the full loan
   // is outstanding for the full hold period (real draws grow over time).
   const interestCost =
     loanAmount * (pct(i.loanRatePct) / 12) * i.holdingMonths;
-  const totalFinancingCost = loanPoints + interestCost + i.loanFees;
+  const totalFinancingCost = loanPoints + interestCost + loanFeesEff;
 
   const totalHoldingCost = i.monthlyHoldingCosts * i.holdingMonths;
 
@@ -163,14 +166,16 @@ function computeMao(i: DealInputs, desiredProfit: number): number {
   const totalSellCosts = sellClosing + agentCommission;
   const totalHoldingCost = i.monthlyHoldingCosts * i.holdingMonths;
 
-  const ltcRate = i.financingType === "hard_money" ? pct(i.loanLtcPct) : 0;
+  const isCash = i.isCashPurchase === true || i.financingType === "cash";
+  const ltcRate = isCash ? 0 : pct(i.loanLtcPct);
   const interestRateOverHold = pct(i.loanRatePct) / 12 * i.holdingMonths;
   const loanCostMultiplier = pct(i.loanPointsPct) + interestRateOverHold;
+  const loanFeesEff = isCash ? 0 : i.loanFees;
 
   // financingCost(P) = ltcRate*(P + totalRehab) * loanCostMultiplier + loanFees
   // slope: ltcRate * loanCostMultiplier; intercept: ltcRate*totalRehab*loanCostMultiplier + loanFees
   const finSlope = ltcRate * loanCostMultiplier;
-  const finIntercept = ltcRate * totalRehab * loanCostMultiplier + i.loanFees;
+  const finIntercept = ltcRate * totalRehab * loanCostMultiplier + loanFeesEff;
 
   // cost(P) = P*(1 + buyClosingPct + finSlope) + (totalRehab + totalHoldingCost + totalSellCosts + finIntercept)
   const a = 1 + pct(i.buyClosingPct) + finSlope;

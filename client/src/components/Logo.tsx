@@ -1,3 +1,5 @@
+import { useTheme } from "./ThemeProvider";
+
 interface Props {
   className?: string;
   size?: number;
@@ -8,8 +10,12 @@ interface Props {
    * "simplified" forces the favicon-friendly solid-house-in-BL variant.
    */
   variant?: "auto" | "full" | "simplified";
-  /** Override default ink/teal colors (e.g. for dark mode tiles). */
+  /** Override default ink color. Falls back to brand ink (light) or near-black (dark). */
   ink?: string;
+  /**
+   * Override the BR (teal) tile fill. By default the BR tile is theme-aware:
+   * light → #126D85 (brand teal), dark → #7be3f0 (cyan-bright).
+   */
   teal?: string;
 }
 
@@ -19,20 +25,27 @@ interface Props {
  * Composition (80×80 viewBox):
  *  • Top-left:     black cell with house-shaped knockout (variant="full")
  *                  OR plain black cell with white house silhouette (variant="simplified")
- *                  with house repositioned to bottom-left for cleaner tiny-size read.
  *  • Top-right:    plain black cell
  *  • Bottom-left:  plain black cell (full) or black cell with house silhouette (simplified)
- *  • Bottom-right: coastal teal cell — the one bright accent.
+ *  • Bottom-right: brand accent — teal #126D85 on light, cyan-bright #7be3f0 on dark.
+ *
+ * Geometry is locked (Direction A spec). The only theme delta is the BR fill, which
+ * shifts to cyan-bright on dark to match the propboxiq.com Coastal Teal palette.
  */
 export function Logo({
   className,
   size = 28,
   variant = "auto",
-  ink = "#0a0e12",
-  teal = "#126D85",
+  ink,
+  teal,
 }: Props) {
+  const { theme } = useTheme();
   const useSimplified =
     variant === "simplified" || (variant === "auto" && size <= 22);
+
+  const inkColor = ink ?? "#0a0e12";
+  const tealColor =
+    teal ?? (theme === "dark" ? "#7be3f0" : "#126D85");
 
   return (
     <svg
@@ -48,14 +61,14 @@ export function Logo({
       {useSimplified ? (
         <>
           {/* Top-left: plain black */}
-          <rect x="6" y="6" width="32" height="32" rx="4" fill={ink} />
+          <rect x="6" y="6" width="32" height="32" rx="4" fill={inkColor} />
           {/* Top-right: plain black */}
-          <rect x="42" y="6" width="32" height="32" rx="4" fill={ink} />
+          <rect x="42" y="6" width="32" height="32" rx="4" fill={inkColor} />
           {/* Bottom-left: black cell + solid white house silhouette */}
-          <rect x="6" y="42" width="32" height="32" rx="4" fill={ink} />
+          <rect x="6" y="42" width="32" height="32" rx="4" fill={inkColor} />
           <path d="M22 50 L32 58 L32 68 L12 68 L12 58 Z" fill="#ffffff" />
-          {/* Bottom-right: coastal teal */}
-          <rect x="42" y="42" width="32" height="32" rx="4" fill={teal} />
+          {/* Bottom-right: brand accent */}
+          <rect x="42" y="42" width="32" height="32" rx="4" fill={tealColor} />
         </>
       ) : (
         <>
@@ -64,14 +77,14 @@ export function Logo({
             fillRule="evenodd"
             clipRule="evenodd"
             d="M10 6 L34 6 Q38 6 38 10 L38 34 Q38 38 34 38 L10 38 Q6 38 6 34 L6 10 Q6 6 10 6 Z M21.30 15.10 Q22.00 14.60 22.70 15.10 L30.00 20.90 L30.00 32.60 Q30.00 38.00 31.50 38.00 L12.50 38.00 Q14.00 38.00 14.00 32.60 L14.00 20.90 L21.30 15.10 Z"
-            fill={ink}
+            fill={inkColor}
           />
           {/* Top-right: plain black */}
-          <rect x="42" y="6" width="32" height="32" rx="4" fill={ink} />
+          <rect x="42" y="6" width="32" height="32" rx="4" fill={inkColor} />
           {/* Bottom-left: plain black */}
-          <rect x="6" y="42" width="32" height="32" rx="4" fill={ink} />
-          {/* Bottom-right: coastal teal */}
-          <rect x="42" y="42" width="32" height="32" rx="4" fill={teal} />
+          <rect x="6" y="42" width="32" height="32" rx="4" fill={inkColor} />
+          {/* Bottom-right: brand accent */}
+          <rect x="42" y="42" width="32" height="32" rx="4" fill={tealColor} />
         </>
       )}
     </svg>
@@ -80,7 +93,7 @@ export function Logo({
 
 /**
  * Two-tone wordmark "PropBox" + "IQ" with the locked teal accent.
- * Use alongside <Logo /> for the full lockup.
+ * On dark theme, "PropBox" inverts to white and "IQ" flips to cyan-bright.
  */
 export function Wordmark({
   className,
@@ -89,6 +102,10 @@ export function Wordmark({
   className?: string;
   size?: number;
 }) {
+  const { theme } = useTheme();
+  const propboxColor = theme === "dark" ? "#ffffff" : "#0a0e12";
+  const iqColor = theme === "dark" ? "#7be3f0" : "#126D85";
+
   return (
     <span
       className={className}
@@ -97,11 +114,11 @@ export function Wordmark({
         fontWeight: 700,
         fontSize: size,
         letterSpacing: "-0.025em",
-        color: "#0a0e12",
+        color: propboxColor,
         lineHeight: 1,
       }}
     >
-      PropBox<span style={{ color: "#126D85" }}>IQ</span>
+      PropBox<span style={{ color: iqColor }}>IQ</span>
     </span>
   );
 }

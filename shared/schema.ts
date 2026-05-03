@@ -91,6 +91,9 @@ export const dealInputsSchema = z.object({
   loanRatePct: z.number().min(0).max(30),
   loanPointsPct: z.number().min(0).max(10),
   loanFees: z.number().nonnegative(),
+  // Quick-mode toggle: when true, calc zeros out interest, points, and loan fees
+  // (kept separate from financingType so detailed-mode loan params remain intact).
+  isCashPurchase: z.boolean().optional(),
   // Optional rule-of-thumb override
   desiredProfitPct: z.number().min(0).max(100), // for max allowable offer (MAO) calc
   // Post-rehab target specs — used to match comps when rehab is changing the footprint
@@ -122,4 +125,5 @@ export const defaultDealInputs: DealInputs = {
   loanPointsPct: 2,
   loanFees: 1500,
   desiredProfitPct: 15,
+  isCashPurchase: false,
 };

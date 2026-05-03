@@ -7,8 +7,19 @@ import {
   type AddressMatch,
 } from "@/components/AddressAutocomplete";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { defaultDealInputs, type Deal } from "@shared/schema";
+
+export const HOLDING_PERIOD_OPTIONS = [3, 6, 9, 12, 18, 24] as const;
+export const DEFAULT_HOLDING_MONTHS = 6;
+export const DEFAULT_IS_CASH_PURCHASE = false;
 import {
   ArrowLeft,
   ArrowRight,
@@ -81,6 +92,18 @@ export default function QuickWizard() {
 
   // Teardown flag (separate from spec changes — applies to lot value plays)
   const [isTeardown, setIsTeardown] = useState(false);
+
+  // Holding period in months — drives ROI / annualized / financing math.
+  // Resets to 6 on every fresh wizard load (no persistence).
+  const [holdingMonths, setHoldingMonths] = useState<number>(
+    DEFAULT_HOLDING_MONTHS,
+  );
+
+  // Cash vs Financed toggle — when true, calc zeros loan interest/points/fees.
+  // Resets to Financed (false) on every fresh wizard load (no persistence).
+  const [isCashPurchase, setIsCashPurchase] = useState<boolean>(
+    DEFAULT_IS_CASH_PURCHASE,
+  );
 
   // Subject property facts fetched from RentCast right after address selection.
   // Used to prefill the post-rehab spec inputs, fall back to baseline for blanks,
@@ -185,6 +208,8 @@ export default function QuickWizard() {
         purchasePrice: parseNumber(purchase),
         rehabBudget: parseNumber(rehab),
         arv: parseNumber(arv),
+        holdingMonths,
+        isCashPurchase,
         isTeardown,
         ...(subjectFacts?.lotSqft != null && subjectFacts.lotSqft > 0
           ? { lotSqft: subjectFacts.lotSqft }
@@ -297,9 +322,9 @@ export default function QuickWizard() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-4 sm:px-6 py-8 sm:py-14">
-      {/* Header: back + progress */}
-      <div className="flex items-center justify-between mb-8 sm:mb-12">
+    <div className="mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-10 pb-32">
+      {/* Header: back + step indicator (mono eyebrow style) */}
+      <div className="flex items-center justify-between mb-6">
         <Button
           variant="ghost"
           size="sm"
@@ -310,28 +335,19 @@ export default function QuickWizard() {
           <ArrowLeft className="h-4 w-4 mr-1.5" />
           {step === 0 ? "Home" : "Back"}
         </Button>
-        <div className="flex items-center gap-1.5">
-          {Array.from({ length: STEP_COUNT }).map((_, i) => (
-            <div
-              key={i}
-              className={`h-1.5 rounded-full transition-all duration-300 ${
-                i === step
-                  ? "w-8 bg-accent"
-                  : i < step
-                    ? "w-1.5 bg-accent"
-                    : "w-1.5 bg-card-border"
-              }`}
-              aria-hidden
-            />
-          ))}
-        </div>
-        <span className="text-xs text-muted-foreground tabular-nums w-10 text-right">
-          {step + 1} / {STEP_COUNT}
+        <span className="mono-eyebrow text-[11px] tracking-[0.18em]">
+          Step {step + 1} of {STEP_COUNT}
         </span>
+        <span className="w-12" />
       </div>
 
-      <div onKeyDown={onKey} className="min-h-[420px] flex flex-col">
-        <AnimatePresence mode="wait" custom={direction}>
+      {/* Glass card hosting the form */}
+      <div
+        className="glass-card relative overflow-hidden"
+        style={{ padding: "26px 22px 22px" }}
+      >
+        <div onKeyDown={onKey} className="min-h-[380px] flex flex-col">
+          <AnimatePresence mode="wait" custom={direction}>
           <motion.div
             key={step}
             custom={direction}
@@ -376,6 +392,10 @@ export default function QuickWizard() {
               <StepRehab
                 rehab={rehab}
                 onRehabChange={setRehab}
+                holdingMonths={holdingMonths}
+                onHoldingMonthsChange={setHoldingMonths}
+                isCashPurchase={isCashPurchase}
+                onIsCashPurchaseChange={setIsCashPurchase}
                 isTeardown={isTeardown}
                 onTeardownChange={setIsTeardown}
                 changingSpecs={changingSpecs}
@@ -438,21 +458,40 @@ export default function QuickWizard() {
           </motion.div>
         </AnimatePresence>
 
-        {/* Action footer */}
-        <div className="mt-10 flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">
+          {/* Segmented progress indicator (matches mock — bars at bottom of card) */}
+          <div className="mt-8 flex gap-1.5">
+            {Array.from({ length: STEP_COUNT }).map((_, i) => (
+              <div
+                key={i}
+                className={`flex-1 h-1 rounded-full transition-all duration-300 ${
+                  i <= step ? "bg-primary" : "bg-card-border"
+                }`}
+                aria-hidden
+              />
+            ))}
+          </div>
+
+          <p className="mt-4 text-[11px] text-muted-foreground/80">
             {step === 0
               ? "We use the U.S. Census Geocoder to standardize addresses."
               : step === 3
                 ? "Press Enter or hit Calculate."
                 : "Press Enter to continue."}
           </p>
+        </div>
+      </div>
+
+      {/* Fixed Continue CTA at bottom (matches mock) */}
+      <div className="fixed bottom-0 inset-x-0 z-30 px-4 sm:px-6 pb-5 pt-4 bg-gradient-to-t from-background via-background/95 to-transparent">
+        <div className="mx-auto max-w-2xl">
           <Button
             size="lg"
             onClick={next}
             disabled={!canAdvance || createDeal.isPending}
             data-testid="button-next"
-            className="min-w-[140px]"
+            className="w-full h-12 rounded-2xl font-semibold tracking-tight
+                       shadow-[0_10px_30px_-12px_rgba(18,109,133,0.55)]
+                       dark:shadow-[0_8px_24px_rgba(95,212,231,0.30)]"
           >
             {createDeal.isPending ? (
               "Calculating…"
@@ -483,14 +522,17 @@ function StepAddress({
 }) {
   return (
     <div>
-      <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight mb-2">
-        What's the property address?
+      <h2 className="font-display font-bold tracking-[-0.02em] text-[28px] sm:text-3xl leading-[1.1] mb-2 text-foreground">
+        What's the address?
       </h2>
-      <p className="text-sm text-muted-foreground mb-7">
-        Start typing — we'll find it for you.
+      <p className="text-[15px] text-muted-foreground mb-7 leading-relaxed">
+        Drop a property and we'll pull comps, taxes, and a Deal Score in seconds.
       </p>
+      <div className="mono-eyebrow mb-2 text-[11px] tracking-[0.18em]">
+        Property address
+      </div>
       {address ? (
-        <div className="rounded-lg border border-accent/40 bg-accent/5 p-4 flex items-start gap-3">
+        <div className="rounded-2xl border border-accent/40 bg-accent/5 p-4 flex items-start gap-3">
           <MapPin className="h-5 w-5 text-accent mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium leading-snug">
@@ -548,10 +590,10 @@ function StepArv({
 
   return (
     <div>
-      <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight mb-2">
+      <h2 className="font-display font-bold tracking-[-0.02em] text-[28px] sm:text-3xl leading-[1.1] mb-2 text-foreground">
         What's the ARV?
       </h2>
-      <p className="text-sm text-muted-foreground mb-7">
+      <p className="text-[15px] text-muted-foreground mb-7 leading-relaxed">
         After Repair Value — what you expect to sell it for once renovated.
       </p>
 
@@ -863,10 +905,10 @@ function StepNumber({
 
   return (
     <div>
-      <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight mb-2">
+      <h2 className="font-display font-bold tracking-[-0.02em] text-[28px] sm:text-3xl leading-[1.1] mb-2 text-foreground">
         {title}
       </h2>
-      <p className="text-sm text-muted-foreground mb-8">{subtitle}</p>
+      <p className="text-[15px] text-muted-foreground mb-8 leading-relaxed">{subtitle}</p>
       <div className="relative">
         <span className="absolute left-0 top-1/2 -translate-y-1/2 text-3xl sm:text-5xl font-semibold text-muted-foreground/60 select-none pointer-events-none">
           $
@@ -902,6 +944,10 @@ function parseNumber(s: string): number {
 function StepRehab({
   rehab,
   onRehabChange,
+  holdingMonths,
+  onHoldingMonthsChange,
+  isCashPurchase,
+  onIsCashPurchaseChange,
   isTeardown,
   onTeardownChange,
   changingSpecs,
@@ -916,6 +962,10 @@ function StepRehab({
 }: {
   rehab: string;
   onRehabChange: (v: string) => void;
+  holdingMonths: number;
+  onHoldingMonthsChange: (v: number) => void;
+  isCashPurchase: boolean;
+  onIsCashPurchaseChange: (v: boolean) => void;
   isTeardown: boolean;
   onTeardownChange: (v: boolean) => void;
   changingSpecs: boolean;
@@ -944,10 +994,10 @@ function StepRehab({
 
   return (
     <div>
-      <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight mb-2">
+      <h2 className="font-display font-bold tracking-[-0.02em] text-[28px] sm:text-3xl leading-[1.1] mb-2 text-foreground">
         How much will you spend on rehab?
       </h2>
-      <p className="text-sm text-muted-foreground mb-8">
+      <p className="text-[15px] text-muted-foreground mb-8 leading-relaxed">
         Materials + labor for renovations. We'll add a 10% safety buffer.
       </p>
       <div className="relative">
@@ -971,6 +1021,81 @@ function StepRehab({
           {fmtUSD(numericValue)}
         </p>
       )}
+
+      {/* Holding period — drives ROI / annualized / financing math */}
+      <div className="mt-7">
+        <div className="mono-eyebrow mb-2 text-[11px] tracking-[0.18em]">
+          Holding Period (months)
+        </div>
+        <Select
+          value={String(holdingMonths)}
+          onValueChange={(v) => onHoldingMonthsChange(Number(v))}
+        >
+          <SelectTrigger
+            className="h-11 rounded-xl border-card-border bg-background/50 focus:ring-accent focus:ring-offset-0 focus:border-accent text-base font-medium tabular-nums"
+            data-testid="select-holding-months"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {HOLDING_PERIOD_OPTIONS.map((m) => (
+              <SelectItem key={m} value={String(m)}>
+                {m} months
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="mt-1.5 text-[11px] text-muted-foreground/80">
+          How long you'll own it before selling. Drives interest, taxes, and
+          carrying costs.
+        </p>
+      </div>
+
+      {/* Financed vs Cash — drives whether loan interest/points/fees are zeroed */}
+      <div className="mt-7">
+        <div className="mono-eyebrow mb-2 text-[11px] tracking-[0.18em]">
+          Purchase Method
+        </div>
+        <div
+          className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-card/50 border border-card-border"
+          role="tablist"
+          aria-label="Purchase method"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!isCashPurchase}
+            onClick={() => onIsCashPurchaseChange(false)}
+            data-testid="button-purchase-financed"
+            className={`py-2.5 rounded-lg text-sm font-medium transition-colors tabular-nums ${
+              !isCashPurchase
+                ? "bg-accent text-accent-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Financed
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={isCashPurchase}
+            onClick={() => onIsCashPurchaseChange(true)}
+            data-testid="button-purchase-cash"
+            className={`py-2.5 rounded-lg text-sm font-medium transition-colors tabular-nums ${
+              isCashPurchase
+                ? "bg-accent text-accent-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Cash
+          </button>
+        </div>
+        <p className="mt-1.5 text-[11px] text-muted-foreground/80">
+          {isCashPurchase
+            ? "All-cash buy — no interest, points, or loan fees. Taxes, insurance, and carrying costs still apply."
+            : "Financed via hard money — includes interest, points, and loan fees over the hold."}
+        </p>
+      </div>
 
       {/* Lot size readout */}
       {subjectFacts?.lotAcres != null && subjectFacts.lotAcres > 0 && (

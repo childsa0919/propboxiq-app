@@ -23,7 +23,6 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { defaultDealInputs, type Deal } from "@shared/schema";
 import { calculateDeal, fmtUSD, fmtPct } from "@/lib/calc";
 import {
-  MapPin,
   Trash2,
   ArrowRight,
   Search,
@@ -254,102 +253,117 @@ export default function Deals() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6 sm:py-10 pb-24">
-      {/* Header */}
+      {/* Header — PIPELINE eyebrow + headline */}
       <header className="mb-5 sm:mb-7">
-        <div className="flex items-end justify-between gap-3 mb-1">
-          <h1 className="font-display text-xl font-semibold tracking-tight">
-            Saved deals
-          </h1>
-          {!compareMode && deals.length >= 2 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCompareMode(true)}
-              data-testid="button-enter-compare"
-            >
-              <GitCompareArrows className="h-3.5 w-3.5 mr-1.5" />
-              Compare
-            </Button>
-          )}
-          {compareMode && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={exitCompareMode}
-              data-testid="button-exit-compare"
-            >
-              <X className="h-3.5 w-3.5 mr-1.5" />
-              Cancel
-            </Button>
-          )}
-        </div>
-        <p className="text-sm text-muted-foreground">
-          {compareMode ? (
-            <span data-testid="text-compare-hint">
-              Select up to 4 deals to compare side-by-side ({selected.size}/4)
-            </span>
-          ) : (
-            <>
-              <span data-testid="text-deal-count">
-                {totals.total} {totals.total === 1 ? "deal" : "deals"}
-              </span>
-              {totals.withNums > 0 && (
-                <span className="text-muted-foreground/80">
-                  {" · "}
-                  {totals.profitable} profitable · combined est.{" "}
-                  <span
-                    className={
-                      totals.totalProfit >= 0
-                        ? "text-[hsl(var(--success))] font-medium"
-                        : "text-destructive font-medium"
-                    }
-                  >
-                    {fmtUSD(totals.totalProfit)}
-                  </span>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="mono-eyebrow mb-1.5 text-[11px] tracking-[0.18em]">
+              Pipeline
+            </div>
+            <h1 className="font-display font-bold tracking-[-0.025em] text-[28px] sm:text-[32px] leading-[1.1] text-foreground">
+              {compareMode ? "Compare deals" : "Your deals"}
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {compareMode ? (
+                <span data-testid="text-compare-hint">
+                  Select up to 4 deals to compare side-by-side ({selected.size}/4)
                 </span>
+              ) : (
+                <>
+                  <span data-testid="text-deal-count">
+                    {totals.total} {totals.total === 1 ? "deal" : "deals"} saved
+                  </span>
+                  {totals.withNums > 0 && (
+                    <span className="text-muted-foreground/80">
+                      {" · "}
+                      {totals.profitable} worth offering · combined est.{" "}
+                      <span
+                        className={
+                          totals.totalProfit >= 0
+                            ? "text-[hsl(var(--success))] font-medium"
+                            : "text-destructive font-medium"
+                        }
+                      >
+                        {fmtUSD(totals.totalProfit)}
+                      </span>
+                    </span>
+                  )}
+                </>
               )}
-            </>
-          )}
-        </p>
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {!compareMode && deals.length >= 2 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCompareMode(true)}
+                data-testid="button-enter-compare"
+              >
+                <GitCompareArrows className="h-3.5 w-3.5 mr-1.5" />
+                Compare
+              </Button>
+            )}
+            {compareMode && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={exitCompareMode}
+                data-testid="button-exit-compare"
+              >
+                <X className="h-3.5 w-3.5 mr-1.5" />
+                Cancel
+              </Button>
+            )}
+            {!compareMode && (
+              <Link href="/quick" data-testid="link-new-deal">
+                <button
+                  type="button"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full
+                             bg-primary text-primary-foreground font-bold text-lg
+                             shadow-[0_8px_20px_-8px_rgba(18,109,133,0.55)]
+                             dark:shadow-[0_6px_18px_rgba(95,212,231,0.30)]
+                             hover:opacity-95 active:scale-95 transition-all"
+                  aria-label="Score a new property"
+                >
+                  +
+                </button>
+              </Link>
+            )}
+          </div>
+        </div>
       </header>
 
-      {/* Active / Archived tabs */}
+      {/* All / Active / Archived pill row (matches mock filter pill bar) */}
       {!compareMode && (
-        <div
-          className="mb-4 inline-flex rounded-lg border border-card-border bg-secondary/30 p-0.5"
-          role="tablist"
-        >
+        <div className="mb-4 flex items-center gap-2" role="tablist">
           <button
             type="button"
             role="tab"
             aria-selected={archiveTab === "active"}
             onClick={() => setArchiveTab("active")}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+            className={`inline-flex items-center px-3.5 py-1.5 rounded-full text-[12px] font-bold tracking-tight transition-colors ${
               archiveTab === "active"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
+                ? "bg-primary text-primary-foreground shadow-[0_4px_14px_-4px_rgba(18,109,133,0.4)]"
+                : "border border-card-border text-muted-foreground hover:text-foreground"
             }`}
             data-testid="tab-active"
           >
-            Active{activeCount > 0 && (
-              <span className="ml-1.5 text-[10px] opacity-70 tabular-nums">{activeCount}</span>
-            )}
+            All{activeCount > 0 && <span className="ml-1.5 opacity-90">· {activeCount}</span>}
           </button>
           <button
             type="button"
             role="tab"
             aria-selected={archiveTab === "archived"}
             onClick={() => setArchiveTab("archived")}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+            className={`inline-flex items-center px-3.5 py-1.5 rounded-full text-[12px] font-semibold tracking-tight transition-colors ${
               archiveTab === "archived"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
+                ? "bg-primary text-primary-foreground shadow-[0_4px_14px_-4px_rgba(18,109,133,0.4)]"
+                : "border border-card-border text-muted-foreground hover:text-foreground"
             }`}
             data-testid="tab-archived"
           >
-            Archived{archivedCount > 0 && (
-              <span className="ml-1.5 text-[10px] opacity-70 tabular-nums">{archivedCount}</span>
-            )}
+            Archived{archivedCount > 0 && <span className="ml-1.5 opacity-90">· {archivedCount}</span>}
           </button>
         </div>
       )}
@@ -668,6 +682,22 @@ export default function Deals() {
   );
 }
 
+function dealScoreFor(roi: number, marginPct: number, holdMonths: number) {
+  // Mirrors QuickResult.computeDealScore so the list matches per-deal pages.
+  const roiPart = Math.max(0, Math.min(45, roi * 0.9));
+  const marginPart = Math.max(0, Math.min(45, marginPct * 1.4));
+  const holdPenalty = Math.max(0, (holdMonths - 6) * 1.5);
+  return Math.max(0, Math.min(100, Math.round(roiPart + marginPart + 10 - holdPenalty)));
+}
+
+function statusFor(hasNumbers: boolean, profitable: boolean, score: number) {
+  if (!hasNumbers) return { label: "Watch", tone: "warn" as const };
+  if (score >= 75) return { label: "Active", tone: "success" as const };
+  if (score >= 50) return { label: "Underwriting", tone: "accent" as const };
+  if (profitable) return { label: "Watch", tone: "warn" as const };
+  return { label: "Pass", tone: "muted" as const };
+}
+
 function DealRow({
   enriched,
   compareMode,
@@ -688,6 +718,25 @@ function DealRow({
   onToggleArchive: () => void;
 }) {
   const { deal, inputs, results, profitable, hasNumbers } = enriched;
+  const score = hasNumbers
+    ? dealScoreFor(results.roiOnCash, results.profitMarginPct, inputs.holdingMonths ?? 6)
+    : 0;
+  // Color-coded score: green ≥75, amber ≥50, red <50
+  const scoreColor =
+    !hasNumbers
+      ? "text-muted-foreground"
+      : score >= 75
+        ? "text-[hsl(var(--success))]"
+        : score >= 50
+          ? "text-[#f59e0b]"
+          : "text-destructive";
+  const status = statusFor(hasNumbers, profitable, score);
+  const statusColor = {
+    success: "text-[hsl(var(--success))]",
+    accent: "text-accent dark:text-[#7be3f0]",
+    warn: "text-[#f59e0b]",
+    muted: "text-muted-foreground",
+  }[status.tone];
 
   const handleClick = () => {
     if (compareMode) {
@@ -698,200 +747,125 @@ function DealRow({
   };
 
   return (
-    <Card
-      className={`group cursor-pointer hover-elevate transition-all ${
-        compareMode && selected
-          ? "ring-2 ring-accent border-accent"
-          : ""
+    <div
+      className={`glass-card group cursor-pointer transition-all ${
+        compareMode && selected ? "ring-2 ring-accent" : ""
       }`}
       onClick={handleClick}
       data-testid={`card-deal-${deal.id}`}
+      style={{ padding: "14px 16px", borderRadius: 14 }}
     >
-      <CardContent className="p-4">
-        <div className="flex items-start gap-3">
-          {compareMode && (
-            <div
-              className={`mt-0.5 h-5 w-5 shrink-0 rounded-md border flex items-center justify-center transition-colors ${
-                selected
-                  ? "bg-accent border-accent text-accent-foreground"
-                  : "border-input bg-background"
-              }`}
-              aria-hidden
-            >
-              {selected && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
-            </div>
-          )}
-          {deal.pinned ? (
-            <Star
-              className="h-4 w-4 mt-0.5 shrink-0 fill-amber-400 text-amber-400"
-              aria-label="Pinned"
-            />
-          ) : (
-            <MapPin className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
-          )}
-          <div className="flex-1 min-w-0">
+      <div className="flex items-center gap-3">
+        {compareMode && (
+          <div
+            className={`shrink-0 h-5 w-5 rounded-md border flex items-center justify-center transition-colors ${
+              selected
+                ? "bg-accent border-accent text-accent-foreground"
+                : "border-input bg-background"
+            }`}
+            aria-hidden
+          >
+            {selected && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
+          </div>
+        )}
+
+        {/* Score number — large, color-coded by band */}
+        <div
+          className={`shrink-0 ${scoreColor} font-mono font-bold tabular-nums leading-none`}
+          style={{ fontSize: 26, minWidth: 44 }}
+          data-testid={`score-${deal.id}`}
+        >
+          {hasNumbers ? score : "—"}
+        </div>
+
+        {/* Address + city · ARV */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            {deal.pinned && (
+              <Star
+                className="h-3 w-3 shrink-0 fill-amber-400 text-amber-400"
+                aria-label="Pinned"
+              />
+            )}
             <p
-              className="text-sm font-medium leading-snug line-clamp-2"
+              className="text-[15px] font-bold leading-snug truncate text-foreground tracking-[-0.01em]"
               data-testid={`text-address-${deal.id}`}
             >
               {deal.name?.trim() || deal.address}
             </p>
-            {deal.name?.trim() ? (
-              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
-                {deal.address}
-                {deal.city ? ` · ${deal.city}, ${deal.state}` : ""}
-              </p>
-            ) : (
-              deal.city && deal.state && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {deal.city}, {deal.state} {deal.zip}
-                </p>
-              )
-            )}
-            {(deal.sqft || deal.beds != null || deal.baths != null) && (
-              <p
-                className="text-[11px] text-muted-foreground mt-0.5 tabular-nums"
-                data-testid={`text-facts-${deal.id}`}
-              >
-                {[
-                  deal.sqft ? `${deal.sqft.toLocaleString()} sqft` : null,
-                  deal.beds != null ? `${deal.beds} bd` : null,
-                  deal.baths != null ? `${deal.baths} ba` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
-            )}
           </div>
-          {!compareMode && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  onClick={(e) => e.stopPropagation()}
-                  className="shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
-                  aria-label="Deal actions"
-                  data-testid={`button-deal-menu-${deal.id}`}
-                >
-                  <MoreVertical className="h-4 w-4" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="end"
+          <p className="mt-0.5 text-[12px] text-muted-foreground truncate">
+            {deal.city && deal.state ? `${deal.city}, ${deal.state}` : "Address pending"}
+            {hasNumbers && inputs.arv > 0 ? ` · ARV ${fmtUSD(inputs.arv)}` : ""}
+          </p>
+        </div>
+
+        {/* Status pill (mono eyebrow style) */}
+        <div
+          className={`shrink-0 font-mono uppercase font-bold tracking-[0.10em] text-[10px] ${statusColor}`}
+          data-testid={`status-${deal.id}`}
+        >
+          {status.label}
+        </div>
+
+        {!compareMode && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
                 onClick={(e) => e.stopPropagation()}
+                className="shrink-0 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
+                aria-label="Deal actions"
+                data-testid={`button-deal-menu-${deal.id}`}
               >
-                <DropdownMenuItem
-                  onClick={onTogglePin}
-                  data-testid={`menu-pin-${deal.id}`}
-                >
-                  <Star
-                    className={`h-4 w-4 mr-2 ${deal.pinned ? "fill-amber-400 text-amber-400" : ""}`}
-                  />
-                  {deal.pinned ? "Unpin" : "Pin to top"}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={onToggleArchive}
-                  data-testid={`menu-archive-${deal.id}`}
-                >
-                  {deal.archived ? (
-                    <>
-                      <ArchiveRestore className="h-4 w-4 mr-2" />
-                      Restore
-                    </>
-                  ) : (
-                    <>
-                      <Archive className="h-4 w-4 mr-2" />
-                      Archive
-                    </>
-                  )}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => {
-                    if (confirm("Delete this deal? This cannot be undone.")) {
-                      onDelete();
-                    }
-                  }}
-                  className="text-destructive focus:text-destructive"
-                  data-testid={`menu-delete-${deal.id}`}
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </div>
-
-        {hasNumbers ? (
-          <div className="mt-3 pt-3 border-t border-card-border grid grid-cols-3 gap-2">
-            <Metric
-              label="Profit"
-              value={fmtUSD(results.netProfit)}
-              tone={profitable ? "good" : "bad"}
-              testId={`metric-profit-${deal.id}`}
-            />
-            <Metric
-              label="ROI"
-              value={fmtPct(results.roiOnCash)}
-              testId={`metric-roi-${deal.id}`}
-            />
-            <Metric
-              label="ARV"
-              value={fmtUSD(inputs.arv)}
-              testId={`metric-arv-${deal.id}`}
-            />
-          </div>
-        ) : (
-          <div className="mt-3 pt-3 border-t border-card-border">
-            <div className="text-xs text-muted-foreground">
-              Numbers not entered yet
-            </div>
-          </div>
+                <MoreVertical className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DropdownMenuItem
+                onClick={onTogglePin}
+                data-testid={`menu-pin-${deal.id}`}
+              >
+                <Star
+                  className={`h-4 w-4 mr-2 ${deal.pinned ? "fill-amber-400 text-amber-400" : ""}`}
+                />
+                {deal.pinned ? "Unpin" : "Pin to top"}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={onToggleArchive}
+                data-testid={`menu-archive-${deal.id}`}
+              >
+                {deal.archived ? (
+                  <>
+                    <ArchiveRestore className="h-4 w-4 mr-2" />
+                    Restore
+                  </>
+                ) : (
+                  <>
+                    <Archive className="h-4 w-4 mr-2" />
+                    Archive
+                  </>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => {
+                  if (confirm("Delete this deal? This cannot be undone.")) {
+                    onDelete();
+                  }
+                }}
+                className="text-destructive focus:text-destructive"
+                data-testid={`menu-delete-${deal.id}`}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
-
-        <div className="mt-3 flex items-center justify-between">
-          <span className="text-[11px] text-muted-foreground">
-            Updated {new Date(deal.updatedAt).toLocaleDateString()}
-          </span>
-          {!compareMode && (
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground group-hover:text-foreground">
-              Open <ArrowRight className="h-3 w-3" />
-            </span>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function Metric({
-  label,
-  value,
-  tone,
-  testId,
-}: {
-  label: string;
-  value: string;
-  tone?: "good" | "bad";
-  testId?: string;
-}) {
-  const toneClass =
-    tone === "good"
-      ? "text-[hsl(var(--success))]"
-      : tone === "bad"
-        ? "text-destructive"
-        : "text-foreground";
-  return (
-    <div className="min-w-0">
-      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-        {label}
-      </p>
-      <p
-        className={`text-sm font-semibold tabular-nums truncate ${toneClass}`}
-        data-testid={testId}
-      >
-        {value}
-      </p>
+      </div>
     </div>
   );
 }
