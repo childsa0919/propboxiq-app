@@ -7,8 +7,18 @@ import {
   type AddressMatch,
 } from "@/components/AddressAutocomplete";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { defaultDealInputs, type Deal } from "@shared/schema";
+
+export const HOLDING_PERIOD_OPTIONS = [3, 6, 9, 12, 18, 24] as const;
+export const DEFAULT_HOLDING_MONTHS = 6;
 import {
   ArrowLeft,
   ArrowRight,
@@ -81,6 +91,12 @@ export default function QuickWizard() {
 
   // Teardown flag (separate from spec changes — applies to lot value plays)
   const [isTeardown, setIsTeardown] = useState(false);
+
+  // Holding period in months — drives ROI / annualized / financing math.
+  // Resets to 6 on every fresh wizard load (no persistence).
+  const [holdingMonths, setHoldingMonths] = useState<number>(
+    DEFAULT_HOLDING_MONTHS,
+  );
 
   // Subject property facts fetched from RentCast right after address selection.
   // Used to prefill the post-rehab spec inputs, fall back to baseline for blanks,
@@ -185,6 +201,7 @@ export default function QuickWizard() {
         purchasePrice: parseNumber(purchase),
         rehabBudget: parseNumber(rehab),
         arv: parseNumber(arv),
+        holdingMonths,
         isTeardown,
         ...(subjectFacts?.lotSqft != null && subjectFacts.lotSqft > 0
           ? { lotSqft: subjectFacts.lotSqft }
@@ -367,6 +384,8 @@ export default function QuickWizard() {
               <StepRehab
                 rehab={rehab}
                 onRehabChange={setRehab}
+                holdingMonths={holdingMonths}
+                onHoldingMonthsChange={setHoldingMonths}
                 isTeardown={isTeardown}
                 onTeardownChange={setIsTeardown}
                 changingSpecs={changingSpecs}
@@ -915,6 +934,8 @@ function parseNumber(s: string): number {
 function StepRehab({
   rehab,
   onRehabChange,
+  holdingMonths,
+  onHoldingMonthsChange,
   isTeardown,
   onTeardownChange,
   changingSpecs,
@@ -929,6 +950,8 @@ function StepRehab({
 }: {
   rehab: string;
   onRehabChange: (v: string) => void;
+  holdingMonths: number;
+  onHoldingMonthsChange: (v: number) => void;
   isTeardown: boolean;
   onTeardownChange: (v: boolean) => void;
   changingSpecs: boolean;
@@ -984,6 +1007,35 @@ function StepRehab({
           {fmtUSD(numericValue)}
         </p>
       )}
+
+      {/* Holding period — drives ROI / annualized / financing math */}
+      <div className="mt-7">
+        <div className="mono-eyebrow mb-2 text-[11px] tracking-[0.18em]">
+          Holding Period (months)
+        </div>
+        <Select
+          value={String(holdingMonths)}
+          onValueChange={(v) => onHoldingMonthsChange(Number(v))}
+        >
+          <SelectTrigger
+            className="h-11 rounded-xl border-card-border bg-background/50 focus:ring-accent focus:ring-offset-0 focus:border-accent text-base font-medium tabular-nums"
+            data-testid="select-holding-months"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {HOLDING_PERIOD_OPTIONS.map((m) => (
+              <SelectItem key={m} value={String(m)}>
+                {m} months
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="mt-1.5 text-[11px] text-muted-foreground/80">
+          How long you'll own it before selling. Drives interest, taxes, and
+          carrying costs.
+        </p>
+      </div>
 
       {/* Lot size readout */}
       {subjectFacts?.lotAcres != null && subjectFacts.lotAcres > 0 && (

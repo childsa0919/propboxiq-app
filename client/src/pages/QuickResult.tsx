@@ -3,8 +3,16 @@ import { useRoute, useLocation, Link } from "wouter";
 import { motion } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { defaultDealInputs, type Deal, type DealInputs } from "@shared/schema";
+import { HOLDING_PERIOD_OPTIONS } from "./QuickWizard";
 import { calculateDeal, fmtUSD, fmtPct } from "@/lib/calc";
 import { MapPreview } from "@/components/MapPreview";
 import { SiteIntelligence } from "@/components/SiteIntelligence";
@@ -196,6 +204,42 @@ export default function QuickResult() {
         </div>
       </div>
 
+      {/* Inline holding period control — drives recalc of score + stats */}
+      <div className="mb-3 flex items-center justify-end gap-3">
+        <span className="mono-eyebrow text-[11px] tracking-[0.18em]">
+          Holding Period
+        </span>
+        <Select
+          value={String(inputs.holdingMonths)}
+          onValueChange={(v) =>
+            updateDeal.mutate({ inputs: { ...inputs, holdingMonths: Number(v) } })
+          }
+          disabled={updateDeal.isPending}
+        >
+          <SelectTrigger
+            className="h-9 w-[140px] rounded-lg border-card-border bg-background/50 focus:ring-accent focus:ring-offset-0 focus:border-accent text-sm font-medium tabular-nums"
+            data-testid="select-holding-months"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {HOLDING_PERIOD_OPTIONS.map((m) => (
+              <SelectItem key={m} value={String(m)}>
+                {m} months
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {updateDeal.isPending && (
+          <span
+            className="text-[11px] text-muted-foreground"
+            data-testid="text-holding-recalc"
+          >
+            Recalculating…
+          </span>
+        )}
+      </div>
+
       {/* Direction A — Deal Card summary (Coastal Teal). Displays the score
           + four headline stats above the legacy profit hero. */}
       <div className="mb-6">
@@ -327,7 +371,7 @@ export default function QuickResult() {
           icon={<Calendar className="h-4 w-4" />}
           label="Hold period"
           value={`${inputs.holdingMonths} mo`}
-          hint="Default — adjust in Detailed mode"
+          hint="Adjust above or in Detailed mode"
         />
       </div>
 
