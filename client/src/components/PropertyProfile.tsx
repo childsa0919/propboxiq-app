@@ -127,7 +127,7 @@ export function PropertyProfile({
   address: string;
   zip: string | null;
 }) {
-  const { data, isLoading, isError } = useQuery<FullProperty>({
+  const { data, isLoading, isError, error } = useQuery<FullProperty>({
     queryKey: ["/api/property/full", address, zip],
     queryFn: async () => {
       const params = new URLSearchParams({ address });
@@ -150,7 +150,43 @@ export function PropertyProfile({
     );
   }
 
-  if (isError || !data) {
+  if (isError) {
+    // Surface a small inline note when the data provider is rate-limited or
+    // misconfigured instead of vanishing the entire profile silently.
+    const m = String((error as Error | null)?.message ?? "");
+    const colonIdx = m.indexOf(":");
+    const body = colonIdx >= 0 ? m.slice(colonIdx + 1).trim() : m;
+    let providerMsg: string | null = null;
+    if (body.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(body);
+        if (
+          typeof parsed?.error === "string" &&
+          parsed.error.startsWith("data_provider_")
+        ) {
+          providerMsg =
+            "Property data temporarily unavailable — you can still enter values manually.";
+        }
+      } catch {}
+    }
+    if (providerMsg) {
+      return (
+        <Card className="mb-8" data-testid="card-property-profile-error">
+          <CardContent className="p-5 sm:p-6">
+            <div className="flex items-center gap-2 mb-2">
+              <Building2 className="h-4 w-4 text-accent" />
+              <h3 className="font-display text-base font-semibold tracking-tight">
+                Property profile
+              </h3>
+            </div>
+            <p className="text-sm text-muted-foreground">{providerMsg}</p>
+          </CardContent>
+        </Card>
+      );
+    }
+    return null;
+  }
+  if (!data) {
     return null;
   }
 

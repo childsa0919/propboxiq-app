@@ -44,6 +44,15 @@ sqlite.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 
+  CREATE TABLE IF NOT EXISTS rentcast_cache (
+    cache_key TEXT PRIMARY KEY,
+    endpoint TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_rentcast_cache_expires_at ON rentcast_cache(expires_at);
+
   CREATE TABLE IF NOT EXISTS deals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,

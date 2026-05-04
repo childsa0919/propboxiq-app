@@ -34,6 +34,19 @@ export const sessions = sqliteTable("sessions", {
 
 export type Session = typeof sessions.$inferSelect;
 
+// Server-side cache for RentCast API responses. Keyed by SHA-256 of
+// `{endpoint}|{normalized_params}`. `payload` holds the JSON response as text.
+// `expires_at` is an epoch-ms integer; rows past that are treated as stale.
+export const rentcastCache = sqliteTable("rentcast_cache", {
+  cacheKey: text("cache_key").primaryKey(),
+  endpoint: text("endpoint").notNull(),
+  payload: text("payload").notNull(),
+  createdAt: integer("created_at").notNull(),
+  expiresAt: integer("expires_at").notNull(),
+});
+
+export type RentcastCacheRow = typeof rentcastCache.$inferSelect;
+
 // Saved deal model. Inputs persist as JSON for forward compatibility.
 export const deals = sqliteTable("deals", {
   id: integer("id").primaryKey({ autoIncrement: true }),

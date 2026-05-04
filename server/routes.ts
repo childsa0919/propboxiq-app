@@ -24,6 +24,40 @@ import {
   KeyMissingError,
   UpstreamError,
 } from "./attom";
+import {
+  getOrFetch as rcGet,
+  RentCastAuthError,
+  RentCastRateLimitError,
+  RentCastUpstreamError,
+} from "./rentcast";
+
+// Map a typed RentCast error to a 503 + friendly body. Returns true if a
+// response was sent. Routes call this in their catch blocks so they don't
+// have to repeat the mapping.
+function sendRentcastErrorResponse(res: Response, err: unknown): boolean {
+  if (err instanceof RentCastAuthError) {
+    res.status(503).json({
+      error: "data_provider_auth",
+      message: "Property data temporarily unavailable",
+    });
+    return true;
+  }
+  if (err instanceof RentCastRateLimitError) {
+    res.status(503).json({
+      error: "data_provider_rate_limit",
+      message: "Property data is rate-limited; try again in a moment",
+    });
+    return true;
+  }
+  if (err instanceof RentCastUpstreamError) {
+    res.status(503).json({
+      error: "data_provider_unavailable",
+      message: "Property data temporarily unavailable",
+    });
+    return true;
+  }
+  return false;
+}
 
 // Census Geocoder — free, no key, US addresses
 const CENSUS_BASE =
@@ -315,9 +349,11 @@ export async function registerRoutes(
     const address = String(req.query.address ?? "").trim();
     if (!address) return res.status(400).json({ error: "address required" });
 
-    const apiKey = process.env.RENTCAST_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "RentCast API key not configured" });
+    if (!process.env.RENTCAST_API_KEY) {
+      return res.status(503).json({
+        error: "data_provider_auth",
+        message: "Property data temporarily unavailable",
+      });
     }
 
     // Optional post-rehab target overrides. When provided, we match comps to these specs
@@ -359,15 +395,21 @@ export async function registerRoutes(
     let comps: Comp[] = [];
     let lastError: string | null = null;
 
+    let abortReason: "auth" | "rate_limit" | null = null;
+
     for (const radius of RADII) {
       try {
-        const url =
-          `https://api.rentcast.io/v1/avm/value?address=${encodeURIComponent(
-            address,
-          )}&radius=${radius}&daysOld=${DAYS_OLD}&compCount=25`;
-        const data: any = await fetchJson(url, {
-          headers: { "X-Api-Key": apiKey },
+        const data: any = await rcGet("avm/value", {
+          address,
+          radius,
+          daysOld: DAYS_OLD,
+          compCount: 25,
         });
+        if (!data) {
+          // 404 from upstream — try the next radius.
+          lastError = "No comps at this radius";
+          continue;
+        }
 
         const sp = data?.subjectProperty ?? {};
         subjectSqft = (sp.squareFootage as number | undefined) ?? subjectSqft;
@@ -423,8 +465,31 @@ export async function registerRoutes(
           usedRadius = radius;
         }
       } catch (e: any) {
+        // Auth + rate-limit errors abort the cascade — burning 10 calls
+        // against a bad key or a quota wall is worse than failing fast.
+        if (e instanceof RentCastAuthError) {
+          abortReason = "auth";
+          break;
+        }
+        if (e instanceof RentCastRateLimitError) {
+          abortReason = "rate_limit";
+          break;
+        }
         lastError = e?.message ?? "RentCast lookup failed";
       }
+    }
+
+    if (abortReason === "auth") {
+      return res.status(503).json({
+        error: "data_provider_auth",
+        message: "Property data temporarily unavailable",
+      });
+    }
+    if (abortReason === "rate_limit") {
+      return res.status(503).json({
+        error: "data_provider_rate_limit",
+        message: "Property data is rate-limited; try again in a moment",
+      });
     }
 
     if (comps.length === 0) {
@@ -529,17 +594,8 @@ export async function registerRoutes(
   app.get("/api/property/lookup", async (req: Request, res: Response) => {
     const address = String(req.query.address ?? "").trim();
     if (!address) return res.status(400).json({ error: "address required" });
-    const apiKey = process.env.RENTCAST_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "RentCast API key not configured" });
-    }
     try {
-      const url = `https://api.rentcast.io/v1/properties?address=${encodeURIComponent(
-        address,
-      )}`;
-      const data: any = await fetchJson(url, {
-        headers: { "X-Api-Key": apiKey },
-      });
+      const data: any = await rcGet("properties", { address });
       // RentCast returns an array; take first match
       const first = Array.isArray(data) ? data[0] : data;
       if (!first) return res.status(404).json({ error: "property not found" });
@@ -560,6 +616,7 @@ export async function registerRoutes(
         propertyType: first.propertyType ?? null,
       });
     } catch (e: any) {
+      if (sendRentcastErrorResponse(res, e)) return;
       res
         .status(404)
         .json({ error: e?.message ?? "Property lookup failed" });
@@ -573,36 +630,48 @@ export async function registerRoutes(
     const address = String(req.query.address ?? "").trim();
     const zip = String(req.query.zip ?? "").trim();
     if (!address) return res.status(400).json({ error: "address required" });
-    const apiKey = process.env.RENTCAST_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "RentCast API key not configured" });
+    if (!process.env.RENTCAST_API_KEY) {
+      return res.status(503).json({
+        error: "data_provider_auth",
+        message: "Property data temporarily unavailable",
+      });
     }
-    const headers = { "X-Api-Key": apiKey };
-    const enc = encodeURIComponent(address);
 
-    // Helper: fetch JSON and swallow 404s as null (so one missing source doesn't fail the whole call).
-    const safe = async <T,>(url: string): Promise<T | null> => {
+    // Per-call wrapper: 401/429 propagate (we want to short-circuit the whole
+    // call and surface a 503), other errors are swallowed to null so a single
+    // missing data source doesn't blank out the whole profile.
+    let fatalError: unknown = null;
+    const safe = async <T>(p: Promise<T | null>): Promise<T | null> => {
       try {
-        return (await fetchJson(url, { headers })) as T;
-      } catch {
+        return await p;
+      } catch (e) {
+        if (
+          e instanceof RentCastAuthError ||
+          e instanceof RentCastRateLimitError
+        ) {
+          fatalError = fatalError ?? e;
+          return null;
+        }
+        // Log other upstream issues but don't fail the whole profile.
+        console.warn("[rentcast] sub-call failed:", (e as Error).message);
         return null;
       }
     };
 
     const [property, rentAvm, saleListings, rentalListings, market] =
       await Promise.all([
-        safe<any>(`https://api.rentcast.io/v1/properties?address=${enc}`),
-        safe<any>(
-          `https://api.rentcast.io/v1/avm/rent/long-term?address=${enc}`,
-        ),
-        safe<any>(`https://api.rentcast.io/v1/listings/sale?address=${enc}`),
-        safe<any>(
-          `https://api.rentcast.io/v1/listings/rental/long-term?address=${enc}`,
-        ),
+        safe<any>(rcGet("properties", { address })),
+        safe<any>(rcGet("avm/rent/long-term", { address })),
+        safe<any>(rcGet("listings/sale", { address })),
+        safe<any>(rcGet("listings/rental/long-term", { address })),
         zip
-          ? safe<any>(`https://api.rentcast.io/v1/markets?zipCode=${zip}`)
+          ? safe<any>(rcGet("markets", { zipCode: zip }))
           : Promise.resolve(null),
       ]);
+
+    if (fatalError) {
+      if (sendRentcastErrorResponse(res, fatalError)) return;
+    }
 
     const p = Array.isArray(property) ? property[0] : property;
     if (!p) return res.status(404).json({ error: "property not found" });

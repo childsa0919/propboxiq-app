@@ -190,9 +190,27 @@ export default function QuickWizard() {
     } catch (e: any) {
       let msg = "Couldn't pull comps for this address.";
       try {
-        // apiRequest wraps response errors with status codes
+        // apiRequest wraps response errors as `${status}: ${body}`. When the
+        // body is a JSON envelope with `error: "data_provider_*"` from a
+        // 503, surface a friendlier note instead of the raw upstream blurb.
         const m = String(e?.message ?? "");
-        if (m.includes(":")) msg = m.split(":").slice(1).join(":").trim() || msg;
+        const colonIdx = m.indexOf(":");
+        const body = colonIdx >= 0 ? m.slice(colonIdx + 1).trim() : m;
+        if (body.startsWith("{")) {
+          try {
+            const parsed = JSON.parse(body);
+            if (typeof parsed?.error === "string" && parsed.error.startsWith("data_provider_")) {
+              msg =
+                "Property data temporarily unavailable — you can still enter values manually.";
+            } else if (typeof parsed?.error === "string") {
+              msg = parsed.message ?? parsed.error ?? msg;
+            }
+          } catch {
+            msg = body || msg;
+          }
+        } else if (body) {
+          msg = body;
+        }
       } catch {}
       setCompsError(msg);
     } finally {
