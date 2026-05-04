@@ -17,6 +17,7 @@ import { calculateDeal, fmtUSD, fmtPct } from "@/lib/calc";
 import { MapPreview } from "@/components/MapPreview";
 import { SiteIntelligence } from "@/components/SiteIntelligence";
 import { PropertyProfile } from "@/components/PropertyProfile";
+import { OwnershipDistress } from "@/components/OwnershipDistress";
 import { CompsMap, type CompPin } from "@/components/CompsMap";
 import {
   TrendingUp,
@@ -439,6 +440,9 @@ export default function QuickResult() {
         onUpdateNotes={(notes) => updateDeal.mutate({ notes })}
         isSaving={updateDeal.isPending}
       />
+
+      {/* ATTOM ownership + distress — pre-foreclosure / NOD / lis pendens, deed history, mortgages */}
+      <OwnershipDistress address={deal.address} subjectAddress={deal.address} />
 
       {/* Full property profile — county, zoning, owner, sale history, rent estimate, market stats */}
       <PropertyProfile address={deal.address} zip={deal.zip ?? null} />

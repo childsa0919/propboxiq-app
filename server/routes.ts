@@ -18,6 +18,12 @@ import {
   ANNE_ARUNDEL_RESIDENTIAL,
   normalizeAaCountyDistrict,
 } from "./zoning/anne-arundel";
+import {
+  getDistress,
+  getOwnership,
+  KeyMissingError,
+  UpstreamError,
+} from "./attom";
 
 // Census Geocoder — free, no key, US addresses
 const CENSUS_BASE =
@@ -985,6 +991,53 @@ export async function registerRoutes(
       water: waterPanel,
       sewer: sewerPanel,
     });
+  });
+
+  // ----- ATTOM: distress + ownership (auth-required) -----
+  // ATTOM complements RentCast with deeper public-records depth: pre-foreclosure
+  // / NOD / lis pendens / auction / REO flags, full deed history, and mortgage
+  // records. Cached server-side. When ATTOM_API_KEY is not configured both
+  // endpoints return 503 so the deploy stays healthy until the user adds a key.
+  function handleAttomError(e: unknown, res: Response): void {
+    if (e instanceof KeyMissingError) {
+      res.status(503).json({
+        error: "ATTOM data provider not configured",
+        detail: "Set ATTOM_API_KEY in environment to enable distress + ownership data",
+      });
+      return;
+    }
+    if (e instanceof UpstreamError) {
+      if (e.status === 404) {
+        res.status(404).json({ error: e.message });
+        return;
+      }
+      res.status(e.status).json({ error: e.message });
+      return;
+    }
+    console.error("[attom] unexpected error", e);
+    res.status(500).json({ error: "ATTOM lookup failed" });
+  }
+
+  app.get("/api/property/distress", requireAuth, async (req, res) => {
+    const address = String(req.query.address ?? "").trim();
+    if (!address) return res.status(400).json({ error: "address required" });
+    try {
+      const result = await getDistress(address);
+      res.json(result);
+    } catch (e) {
+      handleAttomError(e, res);
+    }
+  });
+
+  app.get("/api/property/ownership", requireAuth, async (req, res) => {
+    const address = String(req.query.address ?? "").trim();
+    if (!address) return res.status(400).json({ error: "address required" });
+    try {
+      const result = await getOwnership(address);
+      res.json(result);
+    } catch (e) {
+      handleAttomError(e, res);
+    }
   });
 
   // ----- Deals CRUD (auth-required, scoped to current user) -----
