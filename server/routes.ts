@@ -21,6 +21,7 @@ import {
 import {
   getDistress,
   getOwnership,
+  getMarketSaleTrend,
   KeyMissingError,
   UpstreamError,
 } from "./attom";
@@ -864,6 +865,125 @@ export async function registerRoutes(
           ],
         };
       })(),
+    });
+  });
+
+  // ----- Market · ZIP Snapshot panel (v1.4.1) -----
+  // Combines RentCast /markets (DOM, supply, listings, median list) with ATTOM
+  // /salestrend (median sale, MoM delta). Never 500s — if a provider 401s or is
+  // unavailable, that side returns null and the panel renders "—" placeholders.
+  app.get("/api/market/:zip", async (req: Request, res: Response) => {
+    const zip = String(req.params.zip ?? "").trim();
+    if (!/^\d{5}$/.test(zip)) {
+      return res.status(400).json({ error: "valid 5-digit ZIP required" });
+    }
+
+    type SourceFlags = { rentcast: boolean; attom: boolean };
+    const source: SourceFlags = { rentcast: true, attom: true };
+
+    // RentCast /markets — typed errors mean "no data", flip the source flag.
+    const marketP: Promise<any | null> = rcGet("markets", { zipCode: zip }).catch((e) => {
+      if (
+        e instanceof RentCastAuthError ||
+        e instanceof RentCastRateLimitError ||
+        e instanceof RentCastUpstreamError
+      ) {
+        source.rentcast = false;
+        return null;
+      }
+      console.warn("[market] rentcast error:", (e as Error).message);
+      source.rentcast = false;
+      return null;
+    });
+
+    // ATTOM /salestrend — same posture: never throw out of the route.
+    const trendP = getMarketSaleTrend(zip).catch((e) => {
+      if (e instanceof KeyMissingError) {
+        source.attom = false;
+        return { currentMedianSale: null, previousMedianSale: null, monthLabel: null };
+      }
+      if (e instanceof UpstreamError) {
+        source.attom = false;
+        return { currentMedianSale: null, previousMedianSale: null, monthLabel: null };
+      }
+      console.warn("[market] attom error:", (e as Error).message);
+      source.attom = false;
+      return { currentMedianSale: null, previousMedianSale: null, monthLabel: null };
+    });
+
+    const [market, trend] = await Promise.all([marketP, trendP]);
+
+    // Current month (RentCast top-level saleData) + most-recent prior month
+    // from saleData.history (keyed by YYYY-MM) for MoM deltas.
+    const saleData: any = market?.saleData ?? null;
+    const history: Record<string, any> = (saleData?.history && typeof saleData.history === "object")
+      ? saleData.history
+      : {};
+    const histKeys = Object.keys(history).sort().reverse();
+    const prevSnap: any = histKeys[0] ? history[histKeys[0]] : null;
+
+    const num = (v: unknown): number | null => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const dom = num(saleData?.medianDaysOnMarket);
+    const prevDom = num(prevSnap?.medianDaysOnMarket);
+    const total = num(saleData?.totalListings);
+    const prevTotal = num(prevSnap?.totalListings);
+    const newL = num(saleData?.newListings);
+    const prevNew = num(prevSnap?.newListings);
+    const medList = num(saleData?.medianPrice);
+    const prevMedList = num(prevSnap?.medianPrice);
+
+    // Months Supply = totalListings / newListings (30-day window). Round 1dp.
+    const monthsSupply =
+      total != null && newL != null && newL > 0
+        ? Math.round((total / newL) * 10) / 10
+        : null;
+    const prevMonthsSupply =
+      prevTotal != null && prevNew != null && prevNew > 0
+        ? Math.round((prevTotal / prevNew) * 10) / 10
+        : null;
+
+    const pctDelta = (cur: number | null, prev: number | null): number | null => {
+      if (cur == null || prev == null || prev === 0) return null;
+      return Math.round(((cur - prev) / prev) * 1000) / 10;
+    };
+    const diff = (cur: number | null, prev: number | null): number | null => {
+      if (cur == null || prev == null) return null;
+      return Math.round((cur - prev) * 10) / 10;
+    };
+    const intDiff = (cur: number | null, prev: number | null): number | null => {
+      if (cur == null || prev == null) return null;
+      return Math.round(cur - prev);
+    };
+
+    // Month label — prefer ATTOM's label, fall back to RentCast lastUpdatedDate.
+    let monthLabel: string = trend.monthLabel ?? "";
+    if (!monthLabel) {
+      const lu = saleData?.lastUpdatedDate ?? null;
+      if (typeof lu === "string") {
+        const m = /^(\d{4})-(\d{2})/.exec(lu);
+        if (m) {
+          const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+          monthLabel = `${months[Number(m[2]) - 1]} ${m[1].slice(-2)}`;
+        }
+      }
+    }
+
+    res.json({
+      zip,
+      monthLabel: monthLabel || null,
+      daysOnMarket: { value: dom, deltaDays: intDiff(dom, prevDom) },
+      monthsSupply: { value: monthsSupply, delta: diff(monthsSupply, prevMonthsSupply) },
+      activeListings: { value: total, delta: intDiff(total, prevTotal) },
+      medianList: { value: medList, deltaPct: pctDelta(medList, prevMedList) },
+      medianSale: {
+        value: trend.currentMedianSale,
+        deltaPct: pctDelta(trend.currentMedianSale, trend.previousMedianSale),
+      },
+      source,
     });
   });
 

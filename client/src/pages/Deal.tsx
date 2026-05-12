@@ -22,6 +22,7 @@ import { MapPreview } from "@/components/MapPreview";
 import { useToast } from "@/hooks/use-toast";
 import { exportDealPdf, exportDealPdfBlob } from "@/lib/exportPdf";
 import { EmailPdfDialog } from "@/components/EmailPdfDialog";
+import { MarketStatsPanel } from "@/components/MarketStatsPanel";
 import {
   ArrowLeft,
   MapPin,
@@ -233,6 +234,9 @@ export default function DealPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Market · ZIP Snapshot — same panel shown on QuickResult, also visible when reopening a saved deal */}
+          <MarketStatsPanel zip={deal.zip ?? null} />
 
           {/* Numbers */}
           <Tabs defaultValue="acquisition">

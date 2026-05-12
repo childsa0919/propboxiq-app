@@ -27,6 +27,8 @@ export const ATTOM_ENDPOINTS = {
   foreclosureSnapshot: "/propertyapi/v4/property/snapshot",
   // v4 detail also surfaces foreclosure-status flags on some plans
   v4PropertyDetail: "/propertyapi/v4/property/detail",
+  // ZIP-level monthly sale trend (median/avg sale price by month).
+  salesTrend: "/propertyapi/v1.0.0/salestrend",
 } as const;
 
 export class KeyMissingError extends Error {
@@ -389,4 +391,90 @@ function parseOwnership(profile: any, history: any): OwnershipResult {
     saleHistory: saleHistory.slice(0, 10),
     mortgage,
   };
+}
+
+// ----- ZIP-level monthly sale trend -----
+// ATTOM /salestrend returns a top-level `salestrend` array, each entry keyed by
+// an interval date (YYYY-MM or YYYY-MM-DD). We surface the latest two months so
+// callers can compute month-over-month deltas.
+
+export interface MarketSaleTrendResult {
+  currentMedianSale: number | null;
+  previousMedianSale: number | null;
+  monthLabel: string | null; // e.g. "APR 26"
+}
+
+function formatMonthLabel(interval: string | null | undefined): string | null {
+  if (!interval) return null;
+  // Accept YYYY-MM or YYYY-MM-DD.
+  const m = /^(\d{4})-(\d{2})/.exec(String(interval));
+  if (!m) return null;
+  const year = Number(m[1]);
+  const monthIdx = Number(m[2]) - 1;
+  const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+  if (monthIdx < 0 || monthIdx > 11) return null;
+  return `${months[monthIdx]} ${String(year).slice(-2)}`;
+}
+
+function pickMedianSale(entry: any): number | null {
+  const v = entry?.medsaleprice ?? entry?.medianSalePrice ?? entry?.avgsaleprice ?? entry?.averageSalePrice;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+export async function getMarketSaleTrend(zip: string): Promise<MarketSaleTrendResult> {
+  const cleanZip = String(zip ?? "").trim();
+  const empty: MarketSaleTrendResult = {
+    currentMedianSale: null,
+    previousMedianSale: null,
+    monthLabel: null,
+  };
+  if (!/^\d{5}$/.test(cleanZip)) return empty;
+
+  const key = `salestrend:${cleanZip}:monthly`;
+  const cached = cacheGet(key) as MarketSaleTrendResult | null;
+  if (cached) return cached;
+
+  let data: any = null;
+  try {
+    data = await callAttom<any>(ATTOM_ENDPOINTS.salesTrend, {
+      postalCode: cleanZip,
+      interval: "monthly",
+    });
+  } catch (e) {
+    if (e instanceof UpstreamError && e.status === 404) {
+      cacheSet(key, empty, TTL_LONG_MS);
+      return empty;
+    }
+    // Key missing / auth / rate-limit / 5xx: don't crash the route — let the
+    // caller decide. Return all-null but DO NOT cache (transient).
+    if (e instanceof KeyMissingError) return empty;
+    throw e;
+  }
+
+  // The /salestrend response wraps the data in different shapes across ATTOM
+  // tiers. We look in a few places for the trend array.
+  const trends: any[] =
+    (Array.isArray(data?.salestrend) && data.salestrend) ||
+    (Array.isArray(data?.salesTrends) && data.salesTrends) ||
+    (Array.isArray(data?.response?.result?.package?.item) && data.response.result.package.item) ||
+    [];
+
+  // Sort by interval date descending, then take the latest two months.
+  const sorted = trends
+    .filter((t) => t && typeof t === "object")
+    .map((t) => ({ entry: t, interval: String(t.interval ?? t.intervaldate ?? t.date ?? "") }))
+    .filter((t) => t.interval)
+    .sort((a, b) => b.interval.localeCompare(a.interval));
+
+  const latest = sorted[0]?.entry ?? null;
+  const prior = sorted[1]?.entry ?? null;
+
+  const result: MarketSaleTrendResult = {
+    currentMedianSale: latest ? pickMedianSale(latest) : null,
+    previousMedianSale: prior ? pickMedianSale(prior) : null,
+    monthLabel: latest ? formatMonthLabel(sorted[0].interval) : null,
+  };
+  cacheSet(key, result, TTL_LONG_MS);
+  return result;
 }
