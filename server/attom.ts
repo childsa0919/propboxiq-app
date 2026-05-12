@@ -29,6 +29,7 @@ export const ATTOM_ENDPOINTS = {
   v4PropertyDetail: "/propertyapi/v4/property/detail",
   // ZIP-level monthly sale trend (median/avg sale price by month).
   salesTrend: "/propertyapi/v1.0.0/salestrend",
+  saleSnapshot: "/propertyapi/v1.0.0/sale/snapshot",
 } as const;
 
 export class KeyMissingError extends Error {
@@ -422,58 +423,102 @@ function pickMedianSale(entry: any): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-export async function getMarketSaleTrend(zip: string): Promise<MarketSaleTrendResult> {
+/**
+ * Get monthly sale trend by ZIP using ATTOM /sale/snapshot.
+ *
+ * Why /sale/snapshot instead of /salestrend?
+ * - /salestrend is restricted to higher ATTOM tiers and 404s on our key.
+ * - /sale/snapshot returns individual closed-sale records and IS available
+ *   on our tier. We aggregate ourselves: median price by month, count by
+ *   month, and pick the most recent complete month with data.
+ *
+ * ATTOM lags ~6 months for recent sales. We scan back up to 9 months to
+ * find the most recent month with at least N priced sales, treat that as
+ * "current," and use the month prior as the comparison for deltas.
+ */
+export async function getMarketSaleTrend(zip: string): Promise<MarketSaleTrendResult & { monthlySalesCounts: Record<string, number> }> {
   const cleanZip = String(zip ?? "").trim();
-  const empty: MarketSaleTrendResult = {
+  const empty = {
     currentMedianSale: null,
     previousMedianSale: null,
     monthLabel: null,
+    monthlySalesCounts: {} as Record<string, number>,
   };
   if (!/^\d{5}$/.test(cleanZip)) return empty;
 
-  const key = `salestrend:${cleanZip}:monthly`;
-  const cached = cacheGet(key) as MarketSaleTrendResult | null;
+  const key = `salesnapshot:${cleanZip}:v2`;
+  const cached = cacheGet(key) as (MarketSaleTrendResult & { monthlySalesCounts: Record<string, number> }) | null;
   if (cached) return cached;
+
+  // Pull last 9 months of closed-sale records. ATTOM caps pagesize at 100;
+  // we fetch a single page and rely on ATTOM date filtering. For ZIPs with
+  // very high sale volume, a single page may miss some sales — acceptable
+  // for a median estimate, and pagination can be added later if needed.
+  const today = new Date();
+  const start = new Date(today);
+  start.setMonth(start.getMonth() - 9);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
   let data: any = null;
   try {
-    data = await callAttom<any>(ATTOM_ENDPOINTS.salesTrend, {
-      postalCode: cleanZip,
-      interval: "monthly",
+    data = await callAttom<any>(ATTOM_ENDPOINTS.saleSnapshot, {
+      postalcode: cleanZip,
+      startsalesearchdate: fmt(start),
+      endsalesearchdate: fmt(today),
+      pagesize: "100",
     });
   } catch (e) {
     if (e instanceof UpstreamError && e.status === 404) {
       cacheSet(key, empty, TTL_LONG_MS);
       return empty;
     }
-    // Key missing / auth / rate-limit / 5xx: don't crash the route — let the
-    // caller decide. Return all-null but DO NOT cache (transient).
     if (e instanceof KeyMissingError) return empty;
     throw e;
   }
 
-  // The /salestrend response wraps the data in different shapes across ATTOM
-  // tiers. We look in a few places for the trend array.
-  const trends: any[] =
-    (Array.isArray(data?.salestrend) && data.salestrend) ||
-    (Array.isArray(data?.salesTrends) && data.salesTrends) ||
-    (Array.isArray(data?.response?.result?.package?.item) && data.response.result.package.item) ||
-    [];
+  const records: any[] = Array.isArray(data?.property) ? data.property : [];
 
-  // Sort by interval date descending, then take the latest two months.
-  const sorted = trends
-    .filter((t) => t && typeof t === "object")
-    .map((t) => ({ entry: t, interval: String(t.interval ?? t.intervaldate ?? t.date ?? "") }))
-    .filter((t) => t.interval)
-    .sort((a, b) => b.interval.localeCompare(a.interval));
+  // Group sale prices by YYYY-MM. Only count records that have BOTH a sale
+  // amount and a sale date — ATTOM commonly returns records with empty
+  // sale blocks for parcel-level data, and those would inflate counts.
+  const byMonth: Record<string, number[]> = {};
+  for (const r of records) {
+    const sale = r?.sale ?? null;
+    if (!sale) continue;
+    const amt = Number(sale?.amount?.saleamt);
+    const date = String(sale?.saleTransDate ?? sale?.salesearchdate ?? "");
+    if (!Number.isFinite(amt) || amt <= 0) continue;
+    const m = /^(\d{4})-(\d{2})/.exec(date);
+    if (!m) continue;
+    const key2 = `${m[1]}-${m[2]}`;
+    if (!byMonth[key2]) byMonth[key2] = [];
+    byMonth[key2].push(amt);
+  }
 
-  const latest = sorted[0]?.entry ?? null;
-  const prior = sorted[1]?.entry ?? null;
+  const median = (arr: number[]): number | null => {
+    if (!arr.length) return null;
+    const s = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2);
+  };
 
-  const result: MarketSaleTrendResult = {
-    currentMedianSale: latest ? pickMedianSale(latest) : null,
-    previousMedianSale: prior ? pickMedianSale(prior) : null,
-    monthLabel: latest ? formatMonthLabel(sorted[0].interval) : null,
+  // Pick the most recent month with at least 3 priced sales — below that the
+  // median is too noisy to publish.
+  const monthsDesc = Object.keys(byMonth).sort().reverse();
+  const MIN_SALES = 3;
+  const latestMonth = monthsDesc.find((m) => byMonth[m].length >= MIN_SALES) ?? null;
+  const priorMonth = latestMonth
+    ? monthsDesc.find((m) => m < latestMonth && byMonth[m].length >= MIN_SALES) ?? null
+    : null;
+
+  const monthlySalesCounts: Record<string, number> = {};
+  for (const m of monthsDesc) monthlySalesCounts[m] = byMonth[m].length;
+
+  const result = {
+    currentMedianSale: latestMonth ? median(byMonth[latestMonth]) : null,
+    previousMedianSale: priorMonth ? median(byMonth[priorMonth]) : null,
+    monthLabel: latestMonth ? formatMonthLabel(`${latestMonth}-01`) : null,
+    monthlySalesCounts,
   };
   cacheSet(key, result, TTL_LONG_MS);
   return result;

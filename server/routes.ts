@@ -900,15 +900,15 @@ export async function registerRoutes(
     const trendP = getMarketSaleTrend(zip).catch((e) => {
       if (e instanceof KeyMissingError) {
         source.attom = false;
-        return { currentMedianSale: null, previousMedianSale: null, monthLabel: null };
+        return { currentMedianSale: null, previousMedianSale: null, monthLabel: null, monthlySalesCounts: {} as Record<string, number> };
       }
       if (e instanceof UpstreamError) {
         source.attom = false;
-        return { currentMedianSale: null, previousMedianSale: null, monthLabel: null };
+        return { currentMedianSale: null, previousMedianSale: null, monthLabel: null, monthlySalesCounts: {} as Record<string, number> };
       }
       console.warn("[market] attom error:", (e as Error).message);
       source.attom = false;
-      return { currentMedianSale: null, previousMedianSale: null, monthLabel: null };
+      return { currentMedianSale: null, previousMedianSale: null, monthLabel: null, monthlySalesCounts: {} as Record<string, number> };
     });
 
     const [market, trend] = await Promise.all([marketP, trendP]);
@@ -929,21 +929,38 @@ export async function registerRoutes(
 
     const dom = num(saleData?.medianDaysOnMarket);
     const prevDom = num(prevSnap?.medianDaysOnMarket);
-    const total = num(saleData?.totalListings);
-    const prevTotal = num(prevSnap?.totalListings);
-    const newL = num(saleData?.newListings);
-    const prevNew = num(prevSnap?.newListings);
+    // RentCast totalListings is CUMULATIVE (any-time-active in month), not
+    // currently-active inventory. Apply ÷2 rough proxy for display.
+    const totalRaw = num(saleData?.totalListings);
+    const prevTotalRaw = num(prevSnap?.totalListings);
+    const total = totalRaw != null ? Math.round(totalRaw / 2) : null;
+    const prevTotal = prevTotalRaw != null ? Math.round(prevTotalRaw / 2) : null;
     const medList = num(saleData?.medianPrice);
     const prevMedList = num(prevSnap?.medianPrice);
 
-    // Months Supply = totalListings / newListings (30-day window). Round 1dp.
+    // Months Supply (industry std) = Currently Active Inventory / Avg Monthly
+    // Closed Sales. Numerator: total (the ÷2 proxy above). Denominator: avg of
+    // the 3 most recent complete months of closed sales from ATTOM /sale/snapshot,
+    // EXCLUDING the latest month (which is typically sparse due to recording lag).
+    const salesByMonth = trend.monthlySalesCounts || {};
+    const monthsDesc = Object.keys(salesByMonth).sort().reverse();
+    // Skip index 0 (latest, sparse). Use indices 1..3 for current period;
+    // indices 2..4 for prior period (one month back).
+    const avgClosed = (start: number, count: number): number | null => {
+      const slice = monthsDesc.slice(start, start + count);
+      if (slice.length === 0) return null;
+      const sum = slice.reduce((a, m) => a + (salesByMonth[m] || 0), 0);
+      return sum / slice.length;
+    };
+    const avgCur = avgClosed(1, 3);
+    const avgPrev = avgClosed(2, 3);
     const monthsSupply =
-      total != null && newL != null && newL > 0
-        ? Math.round((total / newL) * 10) / 10
+      total != null && avgCur != null && avgCur > 0
+        ? Math.round((total / avgCur) * 10) / 10
         : null;
     const prevMonthsSupply =
-      prevTotal != null && prevNew != null && prevNew > 0
-        ? Math.round((prevTotal / prevNew) * 10) / 10
+      prevTotal != null && avgPrev != null && avgPrev > 0
+        ? Math.round((prevTotal / avgPrev) * 10) / 10
         : null;
 
     const pctDelta = (cur: number | null, prev: number | null): number | null => {
