@@ -236,7 +236,7 @@ export default function DealPage() {
           </Card>
 
           {/* Market · ZIP Snapshot — same panel shown on QuickResult, also visible when reopening a saved deal */}
-          <MarketStatsPanel zip={deal.zip ?? null} />
+          <MarketStatsPanel zip={deal.zip ?? null} address={deal.address ?? null} />
 
           {/* Numbers */}
           <Tabs defaultValue="acquisition">

@@ -140,21 +140,37 @@ function ShimmerLine({ width }: { width: string }) {
 
 interface Props {
   zip: string | null | undefined;
+  // Optional address fallback — for older saved deals where the dedicated
+  // zip column is null but the ZIP is embedded in the address string
+  // (e.g. "8204 Suez Ave, Millersville, MD 21108").
+  address?: string | null | undefined;
 }
 
-export function MarketStatsPanel({ zip }: Props) {
-  const cleanZip = zip ? String(zip).trim() : "";
-  const enabled = /^\d{5}$/.test(cleanZip);
+export function MarketStatsPanel({ zip, address }: Props) {
+  // Extract the first 5-digit ZIP from messy inputs: handles plain "21122",
+  // ZIP+4 "21122-1234", embedded "Pasadena, MD 21122", or extra whitespace.
+  // Falls back to scanning the address string for older saved deals that
+  // never captured a separate ZIP column. For deals with no extractable
+  // ZIP at all, we still render the panel with em-dashes so the user can
+  // see the feature is available and knows to add a ZIP to the deal record.
+  const sources = [zip, address].map((v) => (v ? String(v).trim() : ""));
+  let cleanZip = "";
+  for (const s of sources) {
+    const m = s.match(/\b(\d{5})(?:-\d{4})?\b/);
+    if (m) {
+      cleanZip = m[1];
+      break;
+    }
+  }
+  const hasZip = cleanZip.length === 5;
 
   const { data, isLoading } = useQuery<MarketResponse>({
     queryKey: ["/api/market", cleanZip],
-    enabled,
+    enabled: hasZip,
     // 5-second-max loader: queries auto-resolve, but we never block render
     // beyond that. queryClient defaults already disable retry/refetch.
     staleTime: 24 * 60 * 60 * 1000,
   });
-
-  if (!enabled) return null;
 
   // ----- DOM -----
   const domVal = data?.daysOnMarket.value ?? null;
@@ -186,7 +202,9 @@ export function MarketStatsPanel({ zip }: Props) {
   const saleLabel = saleDelta == null ? "" : `${formatSignedDecimal(saleDelta)}%`;
 
   // Section header subtitle: "21122 · APR 26"
-  const zipMonth = `${cleanZip}${data?.monthLabel ? ` · ${data.monthLabel}` : ""}`;
+  const zipMonth = hasZip
+    ? `${cleanZip}${data?.monthLabel ? ` · ${data.monthLabel}` : ""}`
+    : "NO ZIP · ADD TO DEAL";
 
   return (
     <section
