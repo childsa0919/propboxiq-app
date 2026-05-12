@@ -449,7 +449,7 @@ export default function QuickResult() {
       <PropertyProfile address={deal.address} zip={deal.zip ?? null} />
 
       {/* Market · ZIP Snapshot — featured 5-KPI panel (v1.4.1) */}
-      <MarketStatsPanel zip={deal.zip ?? null} />
+      <MarketStatsPanel zip={deal.zip ?? null} address={deal.address ?? null} />
 
       {/* Sources & uses + map (asymmetric: 3/5 + 2/5) */}
       <div className="grid gap-5 lg:grid-cols-5 mb-8">
