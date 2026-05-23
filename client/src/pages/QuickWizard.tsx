@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { haptic } from "@/lib/native";
 import { defaultDealInputs, type Deal } from "@shared/schema";
 
 export const HOLDING_PERIOD_OPTIONS = [3, 6, 9, 12, 18, 24] as const;
@@ -305,14 +306,17 @@ export default function QuickWizard() {
 
   function next() {
     if (step < STEP_COUNT - 1) {
+      void haptic("light");
       setDirection(1);
       setStep((s) => (s + 1) as Step);
     } else {
+      void haptic("medium");
       createDeal.mutate();
     }
   }
 
   function back() {
+    void haptic("light");
     if (step > 0) {
       setDirection(-1);
       setStep((s) => (s - 1) as Step);

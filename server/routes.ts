@@ -87,11 +87,28 @@ export async function registerRoutes(
   app.set("trust proxy", 1);
 
   // ----- Auth: request magic link -----
+  //
+  // App Store reviewer shortcut: if the email matches APP_REVIEWER_EMAIL
+  // (set as an env var on Render), we skip the email round-trip and issue
+  // a session cookie immediately. This is the only way Apple's reviewer
+  // can sign in to test the app — they don't have access to our mailbox.
+  // Rotate the env var after launch is approved.
   app.post("/api/auth/request", async (req: Request, res: Response) => {
     const email = String(req.body?.email ?? "").trim().toLowerCase();
     if (!isValidEmail(email)) {
       return res.status(400).json({ error: "Please enter a valid email address." });
     }
+
+    const reviewerEmail = (process.env.APP_REVIEWER_EMAIL || "").trim().toLowerCase();
+    if (reviewerEmail && email === reviewerEmail) {
+      const user = await storage.upsertUser(email);
+      await storage.touchLogin(user.id);
+      const sid = newToken(48);
+      await storage.createSession(sid, user.id, TIMINGS.SESSION_TTL_MS);
+      setSessionCookie(res, sid);
+      return res.json({ ok: true, email, reviewer: true });
+    }
+
     const token = newToken(32);
     await storage.createMagicToken(token, email, TIMINGS.TOKEN_TTL_MS);
 

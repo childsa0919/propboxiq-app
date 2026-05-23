@@ -1,6 +1,30 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+/**
+ * Resolve the API base URL.
+ *
+ * Priority:
+ *   1. Capacitor (iOS app) — always hit https://propboxiq.com (the prod API).
+ *   2. VITE_API_BASE build-time env (set by mobile builds or staging).
+ *   3. Legacy Replit-style "__PORT_5000__" placeholder substitution.
+ *   4. Empty string — relative URLs (same-origin web).
+ */
+function resolveApiBase(): string {
+  // Capacitor exposes window.Capacitor when running inside the native shell.
+  if (
+    typeof window !== "undefined" &&
+    (window as any).Capacitor?.isNativePlatform?.()
+  ) {
+    return "https://propboxiq.com";
+  }
+  const env = (import.meta as any).env?.VITE_API_BASE as string | undefined;
+  if (env && env.length > 0) return env;
+  const legacy = "__PORT_5000__";
+  if (!legacy.startsWith("__")) return legacy;
+  return "";
+}
+
+const API_BASE = resolveApiBase();
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {

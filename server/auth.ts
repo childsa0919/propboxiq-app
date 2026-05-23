@@ -24,14 +24,21 @@ function readSessionCookie(req: Request): string | null {
   return decodeURIComponent(m.slice(SESSION_COOKIE.length + 1));
 }
 
-/** Issue a fresh session cookie. */
+/**
+ * Issue a fresh session cookie.
+ *
+ * In prod we use `SameSite=None; Secure` so the cookie is sent on the
+ * cross-origin fetches the iOS app makes from its `capacitor://localhost`
+ * WebView origin. The web app is same-origin so it works either way.
+ * In dev (HTTP) we fall back to `Lax` because `None` requires `Secure`.
+ */
 export function setSessionCookie(res: Response, sessionId: string) {
   const isProd = process.env.NODE_ENV === "production";
   const parts = [
     `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}`,
     "Path=/",
     "HttpOnly",
-    "SameSite=Lax",
+    isProd ? "SameSite=None" : "SameSite=Lax",
     `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
   ];
   if (isProd) parts.push("Secure");
@@ -44,7 +51,7 @@ export function clearSessionCookie(res: Response) {
     `${SESSION_COOKIE}=`,
     "Path=/",
     "HttpOnly",
-    "SameSite=Lax",
+    isProd ? "SameSite=None" : "SameSite=Lax",
     "Max-Age=0",
   ];
   if (isProd) parts.push("Secure");

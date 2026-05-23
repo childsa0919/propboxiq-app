@@ -432,3 +432,54 @@
   font-size: 9px !important;
   background: rgba(255, 255, 255, 0.78) !important;
 }
+
+/* ============================================================
+   Capacitor / iOS native shell
+   ============================================================
+   These styles apply only when the React app is running inside the
+   PropBox IQ iOS app (the .is-native-ios class is added in main.tsx).
+   They keep the web build untouched. */
+html.is-native-ios,
+html.is-native-ios body {
+  /* Disable iOS rubber-band scroll on the root \u2014 we want a native-feeling
+     fixed-header layout. Individual scroll regions can override with
+     overscroll-behavior: contain. */
+  overscroll-behavior-y: none;
+  /* Disable text selection on long-press for chrome elements. Inputs and
+     content regions re-enable it via .selectable utilities. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Re-enable text selection inside any input, textarea, or content body */
+html.is-native-ios input,
+html.is-native-ios textarea,
+html.is-native-ios [contenteditable="true"],
+html.is-native-ios .selectable,
+html.is-native-ios article,
+html.is-native-ios p {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Push the sticky app header below the iOS status bar / Dynamic Island. */
+html.is-native-ios header.sticky {
+  padding-top: env(safe-area-inset-top);
+}
+html.is-native-ios header.sticky > div {
+  /* Some headers cap their height at h-14; safe-area lives in padding-top */
+}
+
+/* Push fixed bottom CTAs above the home indicator. Components that use
+   `fixed bottom-0` should also include `pb-[env(safe-area-inset-bottom)]`
+   \u2014 but as a backstop we add it here too. */
+html.is-native-ios .fixed.bottom-0,
+html.is-native-ios .sticky.bottom-0 {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+}
+
+/* Bounce-free \u201ctap targets feel native\u201d \u2014 remove the blue iOS tap highlight. */
+html.is-native-ios * {
+  -webkit-tap-highlight-color: transparent;
+}

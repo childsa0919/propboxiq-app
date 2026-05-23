@@ -24,6 +24,46 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
+/**
+ * CORS for the iOS app.
+ *
+ * The Capacitor WKWebView serves the bundle from `capacitor://localhost`
+ * (and `ionic://localhost` on older versions). All API calls from inside
+ * the app are cross-origin, with credentials.
+ *
+ * Same-origin web traffic (propboxiq.com loading /api/*) is unaffected
+ * because the browser doesn't send `Origin` for same-origin requests and
+ * even when it does, this allow-listed echo works the same way.
+ */
+const NATIVE_APP_ORIGINS = new Set([
+  "capacitor://localhost",
+  "ionic://localhost",
+  "http://localhost",
+  "https://localhost",
+]);
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const origin = req.headers.origin;
+  if (origin && NATIVE_APP_ORIGINS.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+    );
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, X-Requested-With",
+    );
+    res.setHeader("Vary", "Origin");
+  }
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
