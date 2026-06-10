@@ -868,18 +868,22 @@ export async function registerRoutes(
     });
   });
 
-  // ----- Market · ZIP Snapshot panel (v1.4.1) -----
-  // Combines RentCast /markets (DOM, supply, listings, median list) with ATTOM
-  // /salestrend (median sale, MoM delta). Never 500s — if a provider 401s or is
-  // unavailable, that side returns null and the panel renders "—" placeholders.
+  // ----- Market · ZIP Snapshot panel (v1.4.1.3) -----
+  // RentCast-only: combines /markets (DOM, supply, listings, median list,
+  // median sale) with a /listings/sale closed-sales count (status=Inactive,
+  // last 30d) for a rigorous Months Supply denominator. ATTOM removed —
+  // its key has been dead and RentCast's Oct 2024 sale-stats update covers
+  // everything we used ATTOM for here. Never 500s; missing data → "—".
   app.get("/api/market/:zip", async (req: Request, res: Response) => {
     const zip = String(req.params.zip ?? "").trim();
     if (!/^\d{5}$/.test(zip)) {
       return res.status(400).json({ error: "valid 5-digit ZIP required" });
     }
 
+    // Keep `attom` in the shape for client compat (MarketStatsPanel reads it);
+    // it's always false now — ATTOM is no longer used for this panel.
     type SourceFlags = { rentcast: boolean; attom: boolean };
-    const source: SourceFlags = { rentcast: true, attom: true };
+    const source: SourceFlags = { rentcast: true, attom: false };
 
     // RentCast /markets — typed errors mean "no data", flip the source flag.
     const marketP: Promise<any | null> = rcGet("markets", { zipCode: zip }).catch((e) => {
@@ -896,22 +900,26 @@ export async function registerRoutes(
       return null;
     });
 
-    // ATTOM /salestrend — same posture: never throw out of the route.
-    const trendP = getMarketSaleTrend(zip).catch((e) => {
-      if (e instanceof KeyMissingError) {
-        source.attom = false;
-        return { currentMedianSale: null, previousMedianSale: null, monthLabel: null, monthlySalesCounts: {} as Record<string, number> };
+    // RentCast /listings/sale?status=Inactive — closed-sales feed.
+    // We use lastSeenDate within the last 30 days as a closed-sale proxy.
+    // Cap at 500 (API max); ZIP-level monthly volume in MD rarely exceeds that.
+    const closedListingsP: Promise<any[] | null> = rcGet<any[]>("listings/sale", {
+      zipCode: zip,
+      status: "Inactive",
+      limit: 500,
+    }).catch((e) => {
+      if (
+        e instanceof RentCastAuthError ||
+        e instanceof RentCastRateLimitError ||
+        e instanceof RentCastUpstreamError
+      ) {
+        return null;
       }
-      if (e instanceof UpstreamError) {
-        source.attom = false;
-        return { currentMedianSale: null, previousMedianSale: null, monthLabel: null, monthlySalesCounts: {} as Record<string, number> };
-      }
-      console.warn("[market] attom error:", (e as Error).message);
-      source.attom = false;
-      return { currentMedianSale: null, previousMedianSale: null, monthLabel: null, monthlySalesCounts: {} as Record<string, number> };
+      console.warn("[market] rentcast closed-sales error:", (e as Error).message);
+      return null;
     });
 
-    const [market, trend] = await Promise.all([marketP, trendP]);
+    const [market, closedListings] = await Promise.all([marketP, closedListingsP]);
 
     // Current month (RentCast top-level saleData) + most-recent prior month
     // from saleData.history (keyed by YYYY-MM) for MoM deltas.
@@ -938,29 +946,46 @@ export async function registerRoutes(
     const medList = num(saleData?.medianPrice);
     const prevMedList = num(prevSnap?.medianPrice);
 
-    // Months Supply (industry std) = Currently Active Inventory / Avg Monthly
-    // Closed Sales. Numerator: total (the ÷2 proxy above). Denominator: avg of
-    // the 3 most recent complete months of closed sales from ATTOM /sale/snapshot,
-    // EXCLUDING the latest month (which is typically sparse due to recording lag).
-    const salesByMonth = trend.monthlySalesCounts || {};
-    const monthsDesc = Object.keys(salesByMonth).sort().reverse();
-    // Skip index 0 (latest, sparse). Use indices 1..3 for current period;
-    // indices 2..4 for prior period (one month back).
-    const avgClosed = (start: number, count: number): number | null => {
-      const slice = monthsDesc.slice(start, start + count);
-      if (slice.length === 0) return null;
-      const sum = slice.reduce((a, m) => a + (salesByMonth[m] || 0), 0);
-      return sum / slice.length;
+    // ----- Median Sale (RentCast saleData.medianPrice) -----
+    // RentCast's medianPrice on /markets is the median sale price across the
+    // current dataset window (per their Oct 2024 sale-stats update). Prior
+    // value from saleData.history for MoM delta.
+    const medianSale = num(saleData?.medianPrice);
+    const prevMedianSale = num(prevSnap?.medianPrice);
+
+    // ----- Months Supply (industry standard) -----
+    // = Currently Active Inventory / Monthly Closed Sales.
+    // Numerator: `total` (÷2 proxy of cumulative totalListings).
+    // Denominator: count of /listings/sale?status=Inactive whose lastSeenDate
+    // falls within the last 30 days. Falls back to ÷2 of newListings as a
+    // last resort if the closed-sales feed is unavailable.
+    const now = Date.now();
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    const countClosedLast30 = (rows: any[] | null | undefined): number | null => {
+      if (!Array.isArray(rows)) return null;
+      let c = 0;
+      for (const r of rows) {
+        const ts = r?.lastSeenDate ?? r?.removedDate ?? r?.lastSeen ?? null;
+        if (typeof ts !== "string") continue;
+        const t = Date.parse(ts);
+        if (Number.isFinite(t) && now - t <= thirtyDaysMs) c++;
+      }
+      return c;
     };
-    const avgCur = avgClosed(1, 3);
-    const avgPrev = avgClosed(2, 3);
+    const closedCur = countClosedLast30(closedListings);
+    const newListings = num(saleData?.newListings);
+    const prevNewListings = num(prevSnap?.newListings);
+    // Active inventory ÷ closed-last-30 = months of supply (rigorous).
+    // Fallback: totalListings ÷ newListings (less accurate; same idea).
     const monthsSupply =
-      total != null && avgCur != null && avgCur > 0
-        ? Math.round((total / avgCur) * 10) / 10
+      total != null && closedCur != null && closedCur > 0
+        ? Math.round((total / closedCur) * 10) / 10
+        : total != null && newListings != null && newListings > 0
+        ? Math.round((total / newListings) * 10) / 10
         : null;
     const prevMonthsSupply =
-      prevTotal != null && avgPrev != null && avgPrev > 0
-        ? Math.round((prevTotal / avgPrev) * 10) / 10
+      prevTotal != null && prevNewListings != null && prevNewListings > 0
+        ? Math.round((prevTotal / prevNewListings) * 10) / 10
         : null;
 
     const pctDelta = (cur: number | null, prev: number | null): number | null => {
@@ -976,16 +1001,14 @@ export async function registerRoutes(
       return Math.round(cur - prev);
     };
 
-    // Month label — prefer ATTOM's label, fall back to RentCast lastUpdatedDate.
-    let monthLabel: string = trend.monthLabel ?? "";
-    if (!monthLabel) {
-      const lu = saleData?.lastUpdatedDate ?? null;
-      if (typeof lu === "string") {
-        const m = /^(\d{4})-(\d{2})/.exec(lu);
-        if (m) {
-          const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
-          monthLabel = `${months[Number(m[2]) - 1]} ${m[1].slice(-2)}`;
-        }
+    // Month label from RentCast lastUpdatedDate.
+    let monthLabel = "";
+    const lu = saleData?.lastUpdatedDate ?? null;
+    if (typeof lu === "string") {
+      const m = /^(\d{4})-(\d{2})/.exec(lu);
+      if (m) {
+        const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+        monthLabel = `${months[Number(m[2]) - 1]} ${m[1].slice(-2)}`;
       }
     }
 
@@ -997,8 +1020,8 @@ export async function registerRoutes(
       activeListings: { value: total, delta: intDiff(total, prevTotal) },
       medianList: { value: medList, deltaPct: pctDelta(medList, prevMedList) },
       medianSale: {
-        value: trend.currentMedianSale,
-        deltaPct: pctDelta(trend.currentMedianSale, trend.previousMedianSale),
+        value: medianSale,
+        deltaPct: pctDelta(medianSale, prevMedianSale),
       },
       source,
     });
