@@ -885,8 +885,13 @@ export async function registerRoutes(
     type SourceFlags = { rentcast: boolean; attom: boolean };
     const source: SourceFlags = { rentcast: true, attom: false };
 
-    // RentCast /markets — typed errors mean "no data", flip the source flag.
-    const marketP: Promise<any | null> = rcGet("markets", { zipCode: zip }).catch((e) => {
+    // RentCast /markets — explicitly request 12 months of history so MoM
+    // deltas are populated (history is on Foundation tier and up).
+    // Typed errors mean "no data", flip the source flag.
+    const marketP: Promise<any | null> = rcGet("markets", {
+      zipCode: zip,
+      historyRange: 12,
+    }).catch((e) => {
       if (
         e instanceof RentCastAuthError ||
         e instanceof RentCastRateLimitError ||
