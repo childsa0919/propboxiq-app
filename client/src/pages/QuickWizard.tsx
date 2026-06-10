@@ -364,8 +364,16 @@ export default function QuickWizard() {
   const GATEWAY_TOTAL = 7;
 
   return (
+    // FIX: toggling `wizard-canvas` (min-height:100vh) off on the first
+    // Continue tap collapsed the container height in the same paint that
+    // swapped the gateway's in-flow surface for the glass-card + fixed CTA.
+    // That simultaneous reflow during iOS Safari's touch→click synthesis was
+    // the first-tap flash: the gateway's own Continue button unmounted out
+    // from under the finger before the synthetic click landed, so tap one
+    // appeared to do nothing and only the second (settled) tap advanced.
+    // Keep min-height stable across both states so nothing reflows mid-tap.
     <div
-      className={`${passedGateway ? "" : "wizard-canvas"} mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-10`}
+      className="wizard-canvas mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-10"
       style={{
         paddingBottom: "calc(8rem + env(safe-area-inset-bottom, 0px))",
       }}
@@ -636,6 +644,7 @@ function StepAddress({
             </p>
           </div>
           <button
+            type="button"
             onClick={onClear}
             className="text-xs text-muted-foreground hover:text-foreground"
             data-testid="button-clear-address"
@@ -695,6 +704,7 @@ function StepArv({
         <div className="space-y-5">
           {!compsData && !compsLoading && (
             <button
+              type="button"
               onClick={onPullComps}
               disabled={compsLoading}
               data-testid="button-pull-comps"
@@ -752,6 +762,7 @@ function StepArv({
                     </p>
                     <div className="flex items-center gap-3 mt-3">
                       <button
+                        type="button"
                         onClick={onPullComps}
                         className="text-sm font-medium text-red-200 hover:text-red-100 underline underline-offset-2"
                       >
@@ -838,6 +849,7 @@ function StepArv({
                   />
                 </div>
                 <button
+                  type="button"
                   onClick={onPullComps}
                   className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-accent"
                 >
