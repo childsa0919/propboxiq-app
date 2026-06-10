@@ -11,6 +11,7 @@ import { InstallPrompt } from "@/components/InstallPrompt";
 import NotFound from "@/pages/not-found";
 import Welcome from "@/pages/Welcome";
 import QuickWizard from "@/pages/QuickWizard";
+import Hold from "@/pages/Hold";
 import QuickResult from "@/pages/QuickResult";
 import Detailed from "@/pages/Detailed";
 import DealPage from "@/pages/Deal";
@@ -23,6 +24,7 @@ function AppRouter() {
     <Switch>
       <Route path="/" component={Welcome} />
       <Route path="/quick" component={QuickWizard} />
+      <Route path="/hold" component={Hold} />
       <Route path="/result/:id" component={QuickResult} />
       <Route path="/detailed" component={Detailed} />
       <Route path="/deal/:id" component={DealPage} />
