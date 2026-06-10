@@ -1,8 +1,14 @@
 import { useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Check, Pencil, Home, DollarSign, ArrowRight, TrendingUp } from "lucide-react";
+import { Check, Pencil, Home, DollarSign, ArrowRight, TrendingUp, X } from "lucide-react";
 import { NewBadge } from "@/components/ui/NewBadge";
 import { cn } from "@/lib/utils";
+
+// Gateway is Step 1 of a 7-step flow. The chrome (✕ Cancel · STEP 1/7 ·
+// progress bar) lives here so both the Flip (/quick) and Hold (/hold) routes
+// render one identical gateway — no per-route chrome that flips layout when a
+// card selection routes between the two wizards.
+const GATEWAY_TOTAL = 7;
 
 export type DealType = "flip" | "hold";
 
@@ -57,11 +63,14 @@ function triggerHaptic() {
 export function DealTypeGateway({
   defaultType = "flip",
   onContinue,
+  onCancel,
 }: {
   /** Which card is pre-selected on mount. */
   defaultType?: DealType;
   /** Called with the chosen strategy when Continue is tapped. */
   onContinue: (type: DealType) => void;
+  /** Called when the ✕ Cancel chrome button is tapped. */
+  onCancel: () => void;
 }) {
   const [selected, setSelected] = useState<DealType>(defaultType);
   // Mirror `selected` in a ref so Continue advances on the FIRST tap. Reading
@@ -78,6 +87,37 @@ export function DealTypeGateway({
 
   return (
     <div className="flex flex-1 flex-col">
+      {/* Canonical gateway chrome (matches hold-gateway-mock): ✕ Cancel ·
+          STEP 1/7 · full-width teal-gradient progress bar. */}
+      <div className="mb-4 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={onCancel}
+          data-testid="button-cancel"
+          className="flex min-h-[44px] items-center gap-1.5 text-[12px] font-bold text-muted-foreground hover:text-foreground"
+        >
+          <X className="h-4 w-4" strokeWidth={2.5} /> Cancel
+        </button>
+        <span
+          className="mono-eyebrow text-[10px] tracking-[0.16em]"
+          data-testid="text-step-counter"
+        >
+          STEP <span className="text-accent">1</span>/{GATEWAY_TOTAL}
+        </span>
+        <span className="w-16" />
+      </div>
+      <div className="mb-5 h-[3px] w-full overflow-hidden rounded-full bg-[#232c37]">
+        <div
+          className="h-full rounded-full transition-all duration-300"
+          style={{
+            width: `${(1 / GATEWAY_TOTAL) * 100}%`,
+            background: "linear-gradient(90deg, #126D85, #5fd4e7)",
+            boxShadow: "0 0 12px rgba(95,212,231,0.4)",
+          }}
+          aria-hidden
+        />
+      </div>
+
       <div className="mono-eyebrow mb-2.5 text-[10px] tracking-[0.16em]">
         Strategy
       </div>
