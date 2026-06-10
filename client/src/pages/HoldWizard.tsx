@@ -8,6 +8,7 @@ import {
 } from "@/components/AddressAutocomplete";
 import { DealTypeGateway, type DealType } from "@/components/DealTypeGateway";
 import { apiRequest } from "@/lib/queryClient";
+import { useRentComps } from "@/lib/useRentComps";
 import { fmtUSD } from "@/lib/calc";
 import {
   DEFAULT_HOLD_STATE,
@@ -760,6 +761,15 @@ function StepRent({
     }
   }, [editing]);
 
+  // Rent comps fire on mount of this step (StepRent only renders at step 4),
+  // so the fetch starts exactly when the user lands on the monthly-rent page —
+  // never earlier. Address comes from the earlier address step.
+  const { data: rentComps, isLoading: compsLoading, error: compsError, refetch } =
+    useRentComps(state.address || null);
+  // Prefer the comps endpoint's median; fall back to the property/full estimate
+  // already in state so the "Use median" button works even before comps land.
+  const medianRent = rentComps?.median ?? state.rentMedian ?? null;
+
   const chips: { label: string; value: number | null }[] = [
     { label: "Low", value: state.rentLow },
     { label: "Median", value: state.rentMedian },
@@ -845,11 +855,140 @@ function StepRent({
         </button>
       )}
 
-      <p className="text-[10px] text-muted-foreground">
-        {state.rentCompCount != null
-          ? `Comps: ${state.rentCompCount} rentals within 1mi`
-          : "Comps: pulled from RentCast long-term rentals"}
-      </p>
+      {/* Use median CTA — appears once we have a median to apply. */}
+      {medianRent != null && medianRent > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            setEditing(false);
+            onSelect(Math.round(medianRent));
+          }}
+          data-testid="button-use-median-rent"
+          className="mb-3 self-start rounded-full border border-accent/40 bg-accent/10 px-3.5 py-1.5 text-[11px] font-bold text-accent transition-colors hover:bg-accent/15"
+        >
+          Use median ({fmtUSD(Math.round(medianRent))})
+        </button>
+      )}
+
+      <RentCompsPanel
+        loading={compsLoading}
+        error={compsError}
+        data={rentComps}
+        onRetry={refetch}
+        hasAddress={!!state.address}
+      />
+    </div>
+  );
+}
+
+// --- Rent comps panel (inline on the rent step) --------------------------
+
+function RentCompsPanel({
+  loading,
+  error,
+  data,
+  onRetry,
+  hasAddress,
+}: {
+  loading: boolean;
+  error: string | null;
+  data: ReturnType<typeof useRentComps>["data"];
+  onRetry: () => void;
+  hasAddress: boolean;
+}) {
+  if (!hasAddress) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-[#1c242d] p-3 text-[11px] text-muted-foreground">
+        Enter an address first to pull rent comps.
+      </div>
+    );
+  }
+
+  const median = data?.median ?? null;
+  const low = data?.rentLow ?? null;
+  const high = data?.rentHigh ?? null;
+
+  return (
+    <div className="rounded-xl border border-accent/20 bg-gradient-to-br from-accent/[0.06] to-transparent p-3">
+      <div className="mb-2 flex items-baseline justify-between">
+        <span className="text-[9px] font-bold tracking-[0.16em] text-accent">
+          RENT COMPS
+        </span>
+        <span className="text-[9px] font-bold tracking-wide text-muted-foreground">
+          {data ? `${data.compCount} nearby · 0.5mi` : "5 nearby · 0.5mi"}
+        </span>
+      </div>
+
+      {median != null && (
+        <p className="mb-2.5 text-[11px] font-bold text-accent">
+          Median: {fmtUSD(median)}
+          {low != null && high != null && (
+            <span className="font-medium text-accent/70">
+              {" · "}Range: {fmtUSD(low)} – {fmtUSD(high)}
+            </span>
+          )}
+        </p>
+      )}
+
+      {loading ? (
+        <div className="space-y-1.5" data-testid="rent-comps-skeleton">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="h-[34px] animate-pulse rounded-lg bg-white/[0.04]"
+            />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="text-muted-foreground">{error}</span>
+          <button
+            type="button"
+            onClick={onRetry}
+            data-testid="button-retry-rent-comps"
+            className="font-bold text-accent hover:underline"
+          >
+            Retry
+          </button>
+        </div>
+      ) : data && data.comps.length > 0 ? (
+        <ul className="space-y-1" data-testid="rent-comps-list">
+          {data.comps.map((c) => (
+            <li
+              key={c.id}
+              className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-[#1c242d] px-2.5 py-1.5"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[11px] font-medium text-foreground">
+                  {c.address || "Nearby rental"}
+                </p>
+                <p className="mt-0.5 text-[9px] text-muted-foreground">
+                  {[
+                    c.beds != null ? `${c.beds}bd` : null,
+                    c.baths != null ? `${c.baths}ba` : null,
+                    c.sqft != null ? `${c.sqft.toLocaleString()} sqft` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || "—"}
+                </p>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="text-[12px] font-extrabold tabular-nums text-foreground">
+                  {fmtUSD(c.rent)}
+                </p>
+                <p className="mt-0.5 text-[9px] text-muted-foreground">
+                  {c.distance > 0 ? `${c.distance.toFixed(1)}mi` : "—"}
+                  {c.daysOld > 0 ? ` · ${c.daysOld}d` : ""}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-[11px] text-muted-foreground">
+          No comps available for this area.
+        </p>
+      )}
     </div>
   );
 }

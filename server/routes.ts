@@ -663,6 +663,98 @@ export async function registerRoutes(
     });
   });
 
+  // ----- Rent comps (RentCast long-term rent AVM) -----
+  // Mirrors /api/comps but for the rental side. Fetches the rent estimate plus
+  // nearby rental comparables for the Hold wizard's monthly-rent step. Fixed at
+  // 5 comps / 0.5 mi. Response is cached 24h in the shared RentCast SQLite cache
+  // (keyed on endpoint+params), so a repeated Hold run on the same address costs
+  // zero upstream credits.
+  app.get("/api/rent-comps", async (req: Request, res: Response) => {
+    const address = String(req.query.address ?? "").trim();
+    if (!address) return res.status(400).json({ error: "address required" });
+
+    if (!process.env.RENTCAST_API_KEY) {
+      return res.status(503).json({
+        error: "data_provider_auth",
+        message: "Property data temporarily unavailable",
+      });
+    }
+
+    const COMP_COUNT = 5;
+    const RADIUS = 0.5;
+
+    type RentComp = {
+      id: string;
+      address: string;
+      rent: number;
+      sqft: number | null;
+      beds: number | null;
+      baths: number | null;
+      distance: number;
+      daysOld: number;
+      lat: number | null;
+      lon: number | null;
+    };
+
+    let data: any;
+    try {
+      data = await rcGet("avm/rent/long-term", {
+        address,
+        radius: RADIUS,
+        compCount: COMP_COUNT,
+      });
+    } catch (e) {
+      if (sendRentcastErrorResponse(res, e)) return;
+      console.warn("[rent-comps] rentcast error:", (e as Error).message);
+      return res.status(503).json({
+        error: "data_provider_unavailable",
+        message: "Rent comps temporarily unavailable",
+      });
+    }
+
+    // 404 from upstream → no rental data for this address.
+    if (!data) {
+      return res.status(404).json({
+        error: "No rent comps found for this address.",
+        radiusMiles: RADIUS,
+      });
+    }
+
+    const rawComps = (Array.isArray(data?.comparables) ? data.comparables : []) as any[];
+    const comps: RentComp[] = rawComps
+      .filter((c) => Number.isFinite(c?.price) && c.price > 0)
+      .map((c) => ({
+        id: String(c.id ?? c.formattedAddress ?? ""),
+        address: String(c.formattedAddress ?? ""),
+        rent: Math.round(c.price),
+        sqft: c.squareFootage ?? null,
+        beds: c.bedrooms ?? null,
+        baths: c.bathrooms ?? null,
+        distance: typeof c.distance === "number" ? c.distance : 0,
+        daysOld: typeof c.daysOld === "number" ? c.daysOld : 0,
+        lat: c.latitude ?? null,
+        lon: c.longitude ?? null,
+      }))
+      .slice(0, COMP_COUNT);
+
+    const median = Number.isFinite(data?.rent) ? Math.round(data.rent) : null;
+    const rentLow = Number.isFinite(data?.rentRangeLow)
+      ? Math.round(data.rentRangeLow)
+      : null;
+    const rentHigh = Number.isFinite(data?.rentRangeHigh)
+      ? Math.round(data.rentRangeHigh)
+      : null;
+
+    res.json({
+      median,
+      rentLow,
+      rentHigh,
+      compCount: comps.length,
+      radiusMiles: RADIUS,
+      comps,
+    });
+  });
+
   // ----- Subject property facts via RentCast (cheap lookup) -----
   // Returns sqft / beds / baths / yearBuilt for the address so we can prefill
   // the post-rehab spec inputs with the as-is footprint.
