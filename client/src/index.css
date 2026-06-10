@@ -326,8 +326,12 @@
      the same background as Welcome and future PRs referencing them don't break.
      The gateway screen surface is transparent so content sits directly on the
      unified teal canvas (white-on-teal, matching Welcome). */
+  /* iOS Safari shrinks 100vh by the URL-bar height on first scroll/tap, which
+     re-evaluated viewport-height layout mid-interaction. Use 100dvh so the
+     canvas height is stable across the URL-bar collapse and nothing reflows on
+     the first gateway tap. */
   .wizard-canvas {
-    min-height: 100vh;
+    min-height: 100dvh;
   }
 
   .wizard-screen {
@@ -366,22 +370,6 @@
     color: var(--brand-cyan-bright);
   }
 
-  /* ---------- Wizard canvas (deal-type gateway + Hold wizard) ----------
-     Reverted: the app is unified on the Welcome teal canvas (the global body
-     gradient). These classes are kept as no-ops so the wizard/result routes
-     inherit the same background as Welcome and future PRs referencing them
-     don't break. The gateway/result screen surface is transparent so content
-     sits directly on the unified teal canvas (white-on-teal, matching Welcome). */
-  .wizard-canvas {
-    min-height: 100vh;
-  }
-
-  .wizard-screen {
-    background: transparent;
-    border: 0;
-    border-radius: 24px;
-    box-shadow: none;
-  }
 }
 
 @layer utilities {

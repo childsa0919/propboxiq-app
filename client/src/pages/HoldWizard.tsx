@@ -217,42 +217,40 @@ export default function HoldWizard() {
       className="wizard-canvas mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-10"
       style={{ paddingBottom: "calc(8rem + env(safe-area-inset-bottom, 0px))" }}
     >
-      {/* Wizard chrome: × Cancel + STEP n/7 + progress bar */}
-      <div className="mb-4 flex items-center justify-between">
-        <button
-          type="button"
-          onClick={step === 0 ? () => navigate("/") : back}
-          data-testid="button-cancel"
-          className="flex min-h-[44px] items-center gap-1.5 text-[12px] font-bold text-muted-foreground hover:text-foreground"
-        >
-          {step === 0 ? (
-            <>
+      {/* Wizard chrome: × Cancel + STEP n/7 + progress bar. Step 0 (the
+          gateway) renders its own canonical chrome inside DealTypeGateway, so
+          this per-route chrome covers only the real wizard steps (STEP 2/7…). */}
+      {step > 0 && (
+        <>
+          <div className="mb-4 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={back}
+              data-testid="button-cancel"
+              className="flex min-h-[44px] items-center gap-1.5 text-[12px] font-bold text-muted-foreground hover:text-foreground"
+            >
               <X className="h-4 w-4" /> Cancel
-            </>
-          ) : (
-            <>
-              <X className="h-4 w-4" /> Cancel
-            </>
-          )}
-        </button>
-        <span
-          className="mono-eyebrow text-[10px] tracking-[0.16em]"
-          data-testid="text-step-counter"
-        >
-          STEP {step + 1}/{STEP_COUNT}
-        </span>
-        <span className="w-16" />
-      </div>
-      <div className="mb-5 h-[3px] w-full overflow-hidden rounded-full bg-[#232c37]">
-        <div
-          className="h-full rounded-full transition-all duration-300"
-          style={{
-            width: `${progressPct}%`,
-            background: "linear-gradient(90deg, #126D85, #5fd4e7)",
-          }}
-          aria-hidden
-        />
-      </div>
+            </button>
+            <span
+              className="mono-eyebrow text-[10px] tracking-[0.16em]"
+              data-testid="text-step-counter"
+            >
+              STEP {step + 1}/{STEP_COUNT}
+            </span>
+            <span className="w-16" />
+          </div>
+          <div className="mb-5 h-[3px] w-full overflow-hidden rounded-full bg-[#232c37]">
+            <div
+              className="h-full rounded-full transition-all duration-300"
+              style={{
+                width: `${progressPct}%`,
+                background: "linear-gradient(90deg, #126D85, #5fd4e7)",
+              }}
+              aria-hidden
+            />
+          </div>
+        </>
+      )}
 
       <div
         className="wizard-screen relative overflow-hidden"
@@ -270,7 +268,11 @@ export default function HoldWizard() {
               className="flex flex-1 flex-col"
             >
               {step === 0 && (
-                <DealTypeGateway defaultType="hold" onContinue={handleGateway} />
+                <DealTypeGateway
+                  defaultType="hold"
+                  onContinue={handleGateway}
+                  onCancel={() => navigate("/")}
+                />
               )}
               {step === 1 && (
                 <StepAddress
