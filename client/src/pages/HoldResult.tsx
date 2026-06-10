@@ -77,7 +77,7 @@ export default function HoldResult() {
   return (
     <div
       className="wizard-canvas mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-10"
-      style={{ paddingBottom: "calc(7rem + env(safe-area-inset-bottom, 0px))" }}
+      style={{ paddingBottom: "calc(9rem + env(safe-area-inset-bottom, 0px))" }}
     >
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -122,16 +122,16 @@ export default function HoldResult() {
               /mo
             </span>
           </div>
-          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-white/75">
             <div>
-              Rent <b className="font-bold text-foreground">{fmtMoney0(inputs.monthlyRent)}</b>
+              Rent <b className="font-bold text-white">{fmtMoney0(inputs.monthlyRent)}</b>
             </div>
             <div>
-              PITI <b className="font-bold text-foreground">{fmtMoney0(r.piti)}</b>
+              PITI <b className="font-bold text-white">{fmtMoney0(r.piti)}</b>
             </div>
             <div>
               Reserves{" "}
-              <b className="font-bold text-foreground">{fmtMoney0(r.reservesTotal)}</b>
+              <b className="font-bold text-white">{fmtMoney0(r.reservesTotal)}</b>
             </div>
           </div>
         </div>
@@ -198,9 +198,9 @@ export default function HoldResult() {
 
         {/* Secondary metrics */}
         <div className="mb-3 grid grid-cols-3 gap-2">
-          <Metric label="CASH-ON-CASH" value={fmtPct(r.cashOnCashPct)} />
-          <Metric label="CAP RATE" value={fmtPct(r.capRatePct)} />
-          <Metric label="DSCR" value={r.dscr.toFixed(2)} />
+          <Metric label="CASH-ON-CASH" value={fmtPct(r.cashOnCashPct)} negative={r.cashOnCashPct < 0} />
+          <Metric label="CAP RATE" value={fmtPct(r.capRatePct)} negative={r.capRatePct < 0} />
+          <Metric label="DSCR" value={r.dscr.toFixed(2)} negative={r.dscr < 1} />
         </div>
 
         {/* Monthly outflow */}
@@ -346,7 +346,15 @@ function ScoreCard({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({
+  label,
+  value,
+  negative = false,
+}: {
+  label: string;
+  value: string;
+  negative?: boolean;
+}) {
   return (
     <div
       className="rounded-xl border px-2.5 py-3"
@@ -355,7 +363,12 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div className="mb-1 text-[9px] font-bold tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
-      <div className="font-display text-[16px] font-black leading-none tracking-[-0.01em] text-foreground">
+      <div
+        className={cn(
+          "font-display text-[16px] font-black leading-none tracking-[-0.01em]",
+          negative ? "text-[#f87171]" : "text-[#5fd4e7]",
+        )}
+      >
         {value}
       </div>
     </div>

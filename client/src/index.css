@@ -340,37 +340,21 @@
     color: var(--brand-cyan-bright);
   }
 
-  /* ---------- Wizard ink canvas (deal-type gateway + Hold wizard) ----------
-     The global body gradient is a teal wash; the wizard mocks use a near-black
-     ink canvas so the teal only reads as card / CTA / selected accents. This
-     overrides the body wash for the wizard route only — Welcome and the rest of
-     the app keep the teal canvas. */
+  /* ---------- Wizard canvas (deal-type gateway + Hold wizard) ----------
+     Reverted: the app is unified on the Welcome teal canvas (the global body
+     gradient). These classes are kept as no-ops so the wizard/result routes
+     inherit the same background as Welcome and future PRs referencing them
+     don't break. The gateway/result screen surface is transparent so content
+     sits directly on the unified teal canvas (white-on-teal, matching Welcome). */
   .wizard-canvas {
-    position: relative;
-    isolation: isolate;
     min-height: 100vh;
   }
-  .wizard-canvas::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    background:
-      radial-gradient(1200px 600px at 80% -200px, rgba(18,109,133,0.18), transparent 60%),
-      radial-gradient(800px 400px at 0% 100%, rgba(95,212,231,0.06), transparent 60%),
-      var(--brand-ink);
-  }
 
-  /* Gateway / wizard screen surface — matches the mock's .screen (ink-2 fill +
-     faint top cyan glow) instead of the frosted glass card used elsewhere. */
   .wizard-screen {
-    background:
-      radial-gradient(400px 200px at 50% 0%, rgba(95,212,231,0.05), transparent 70%),
-      #141a21;
-    border: 1px solid rgba(255,255,255,0.08);
+    background: transparent;
+    border: 0;
     border-radius: 24px;
-    box-shadow: 0 40px 100px -30px rgba(0,0,0,0.7);
+    box-shadow: none;
   }
 }
 

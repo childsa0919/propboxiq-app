@@ -4,6 +4,33 @@
 // models monthly cash flow, financing (PITI), reserves, and the dual
 // Long-term / Short-term Hold Scores.
 
+/**
+ * Worked example — realistic Bowie MD turnkey SFH (sanity check, no goosed inputs).
+ *
+ * Inputs (calculateHold):
+ *   purchasePrice  $420,000
+ *   rehab          $0          (turnkey)
+ *   monthlyRent    $2,600      (realistic Bowie SFH median)
+ *   downPct        25%   → loanAmount $315,000, downPayment $105,000
+ *   ratePct        7.0% / termYears 30
+ *   annualPropertyTax  estimated 1.05% → $4,410/yr ($368/mo)
+ *   annualInsurance    estimated 0.50% → $2,100/yr ($175/mo)
+ *   reserves       vacancy 5 / management 8 / maintenance 5 / capex 5 (23% of rent)
+ *   marketCapRate  null  (absolute-cap fallback) · valueEstimate null (margin 0)
+ *
+ * Computed outputs:
+ *   monthlyPI   $2,096   PITI $2,638   reserves $598/mo
+ *   monthlyCashFlow  −$636/mo   (NOI $17,514/yr, cap 4.17%)
+ *   cashInvested $113,400 (25% down + 2% closing)
+ *   CoC −6.73%   DSCR 0.70   equityBuild 2.82%   rent-to-price 7.43%
+ *   → Long 20 / Short 10 → spread 10 → NO unicorn.
+ *
+ * Note: at $2,600 rent this $420k purchase does NOT cash flow once realistic
+ * DMV tax + insurance + 23% reserves are carried (PITI alone is $2,638 > rent).
+ * The QA "Unicorn" fixture (16.6% cap, 36% CoC) only fires because its inputs
+ * were deliberately goosed — the formulas here are unchanged and consistent.
+ */
+
 export interface HoldInputs {
   purchasePrice: number;
   rehab: number; // 0 when the rehab toggle is off
