@@ -58,8 +58,12 @@ function hydrateFromSearch(search: string): {
   );
   const fromEdit = decoded.address.trim().length > 0;
   if (!fromEdit) {
+    // Cross-route entry from the Flip gateway (user switched to Hold and tapped
+    // Continue) carries `?gateway=skip`. Skip our own gateway and open on the
+    // address step so the strategy choice isn't re-confirmed.
+    const skipGateway = params.get("gateway") === "skip";
     return {
-      initialStep: 0,
+      initialStep: skipGateway ? 1 : 0,
       initialState: { ...DEFAULT_HOLD_STATE },
       fromEdit: false,
     };
@@ -200,7 +204,7 @@ export default function HoldWizard() {
 
   function handleGateway(type: DealType) {
     if (type === "flip") {
-      navigate("/quick");
+      navigate("/quick?gateway=skip");
       return;
     }
     setDirection(1);

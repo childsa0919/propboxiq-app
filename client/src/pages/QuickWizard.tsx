@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -80,7 +80,16 @@ type CompsResponse = {
 
 export default function QuickWizard() {
   const [, navigate] = useLocation();
-  const [passedGateway, setPassedGateway] = useState(false);
+  const search = useSearch();
+  // Cross-route entry from the Hold gateway (user switched to Flip and tapped
+  // Continue) carries `?gateway=skip`. Skip our own gateway and open on the
+  // first Flip step so the strategy choice isn't re-confirmed.
+  const skipGateway = useRef(
+    new URLSearchParams(
+      search.startsWith("?") ? search.slice(1) : search,
+    ).get("gateway") === "skip",
+  );
+  const [passedGateway, setPassedGateway] = useState(skipGateway.current);
   const [step, setStep] = useState<Step>(0);
   const [direction, setDirection] = useState<1 | -1>(1);
 
@@ -332,7 +341,7 @@ export default function QuickWizard() {
 
   function handleGatewayContinue(type: DealType) {
     if (type === "hold") {
-      navigate("/hold");
+      navigate("/hold?gateway=skip");
       return;
     }
     setDirection(1);
