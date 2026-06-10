@@ -10,18 +10,23 @@ import { useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
 import { Pencil, Bookmark } from "lucide-react";
 import { fmtUSD, fmtPct } from "@/lib/calc";
-import { calculateHold, divergenceCallout } from "@/lib/holdCalc";
+import {
+  calculateHold,
+  divergenceCallout,
+  crossoverYear,
+  compPercentile,
+} from "@/lib/holdCalc";
 import {
   decodeHoldState,
   encodeHoldState,
   estimatedAnnualInsurance,
   estimatePropertyTax,
+  synthCompRents,
   toHoldInputs,
 } from "@/lib/holdState";
 import { useToast } from "@/hooks/use-toast";
+import { SAVED_HOLDS_KEY } from "@/lib/savedHolds";
 import { cn } from "@/lib/utils";
-
-const SAVED_HOLDS_KEY = "propboxiq:savedHolds";
 
 function fmtMoney0(n: number): string {
   return fmtUSD(Math.round(n));
@@ -42,6 +47,30 @@ export default function HoldResult() {
 
   const cashFlowPositive = r.monthlyCashFlow >= 0;
 
+  // Crossover Year — only meaningful when cash flow is positive and equity
+  // actually overtakes it within 10 years.
+  const crossover = useMemo(
+    () =>
+      crossoverYear(
+        r.monthlyCashFlow,
+        r.loanAmount,
+        inputs.ratePct,
+        inputs.termYears,
+      ),
+    [r.monthlyCashFlow, r.loanAmount, inputs.ratePct, inputs.termYears],
+  );
+  const showCrossover =
+    r.monthlyCashFlow > 0 && crossover.crossover !== null;
+
+  // Comp Percentile — rank against the RentCast rent band for this ZIP. Hidden
+  // entirely when we have no ZIP or no comp band to work with.
+  const compRents = useMemo(() => synthCompRents(state), [state]);
+  const percentile = useMemo(
+    () => compPercentile(r.monthlyCashFlow, compRents, r.piti),
+    [r.monthlyCashFlow, compRents, r.piti],
+  );
+  const showPercentile = !!state.zip && compRents.length > 0;
+
   function handleEdit() {
     // Round-trip back to the address step (wizard STEP 2 of 7) with state.
     navigate(`/hold?step=1&${encodeHoldState(state)}`);
@@ -52,6 +81,7 @@ export default function HoldResult() {
       const raw = localStorage.getItem(SAVED_HOLDS_KEY);
       const list: unknown[] = raw ? JSON.parse(raw) : [];
       list.unshift({
+        dealType: "hold",
         savedAt: new Date().toISOString(),
         address: state.address,
         zip: state.zip,
@@ -63,7 +93,7 @@ export default function HoldResult() {
       localStorage.setItem(SAVED_HOLDS_KEY, JSON.stringify(list.slice(0, 100)));
       toast({
         title: "Deal saved",
-        description: "Find it in your Holds bucket (coming soon).",
+        description: "Find it in your Holds bucket on the Deals page.",
       });
     } catch {
       toast({
@@ -190,11 +220,25 @@ export default function HoldResult() {
           </div>
         )}
 
-        {/* TODO(PR-C): Crossover Year card slot — 10-year return buildup
-            (cash flow vs equity build vs total return + crossover year). */}
+        {/* Crossover Year — 10-year return buildup */}
+        {showCrossover && (
+          <CrossoverCard
+            cashFlow10yr={crossover.cashFlow10yr}
+            equityBuild10yr={crossover.equityBuild10yr}
+            totalReturn10yr={crossover.totalReturn10yr}
+            crossover={crossover.crossover as number}
+          />
+        )}
 
-        {/* TODO(PR-C): Comp Percentile card slot — rank this deal's Hold Score
-            against all RentCast comps in the same ZIP at market rent. */}
+        {/* Comp Percentile — rank vs RentCast comps in the same ZIP */}
+        {showPercentile && (
+          <PercentileCard
+            zip={state.zip as string}
+            percentile={percentile.percentile}
+            compCount={percentile.compCount}
+            limited={percentile.limited}
+          />
+        )}
 
         {/* Secondary metrics */}
         <div className="mb-3 grid grid-cols-3 gap-2">
@@ -287,6 +331,247 @@ export default function HoldResult() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function fmtCompact(n: number): string {
+  const v = Math.round(n);
+  if (Math.abs(v) >= 1000) return `$${Math.round(v / 1000)}k`;
+  return `$${v}`;
+}
+
+export function CrossoverCard({
+  cashFlow10yr,
+  equityBuild10yr,
+  totalReturn10yr,
+  crossover,
+}: {
+  cashFlow10yr: number;
+  equityBuild10yr: number;
+  totalReturn10yr: number;
+  crossover: number;
+}) {
+  const longest = Math.max(cashFlow10yr, equityBuild10yr, totalReturn10yr, 1);
+  const bars = [
+    {
+      key: "cash",
+      label: "Cash flow",
+      value: cashFlow10yr,
+      fill: "linear-gradient(90deg, #126D85, #5fd4e7)",
+      ink: "#0a0e12",
+    },
+    {
+      key: "equity",
+      label: "Equity build",
+      value: equityBuild10yr,
+      fill: "linear-gradient(90deg, #7be3f0, #b8eef5)",
+      ink: "#0a0e12",
+    },
+    {
+      key: "total",
+      label: "Total return",
+      value: totalReturn10yr,
+      fill: "linear-gradient(90deg, #ffffff, #d0f4f8)",
+      ink: "#0a0e12",
+    },
+  ];
+
+  return (
+    <div
+      className="mb-3 rounded-2xl border p-3.5"
+      style={{ borderColor: "rgba(255,255,255,0.08)", background: "#1c242d" }}
+      data-testid="card-crossover"
+    >
+      <div className="mb-2.5 flex items-baseline justify-between">
+        <div className="text-[10px] font-bold tracking-[0.14em] text-muted-foreground">
+          10-YEAR RETURN BUILDUP
+        </div>
+        <div
+          className="rounded-full px-2.5 py-1 text-[10px] font-extrabold tracking-[0.04em]"
+          style={{ background: "rgba(251,191,36,0.16)", color: "#fbbf24" }}
+          data-testid="badge-crossover-year"
+        >
+          CROSSOVER · YR {crossover}
+        </div>
+      </div>
+
+      <div className="mb-3 flex flex-col gap-1.5">
+        {bars.map((b) => (
+          <div key={b.key} className="flex items-center gap-2.5 text-[11px]">
+            <div className="w-[78px] shrink-0 font-bold text-muted-foreground">
+              {b.label}
+            </div>
+            <div
+              className="relative h-[18px] flex-1 overflow-hidden rounded-md"
+              style={{ background: "#232c37" }}
+            >
+              <motion.div
+                className="flex h-full items-center rounded-md px-2 text-[10px] font-extrabold whitespace-nowrap"
+                style={{ background: b.fill, color: b.ink }}
+                initial={{ width: 0 }}
+                animate={{
+                  width: `${Math.max(12, (b.value / longest) * 100)}%`,
+                }}
+                transition={{ duration: 0.6, ease: "easeOut" }}
+                data-testid={`crossover-bar-${b.key}`}
+              >
+                {fmtCompact(b.value)}
+              </motion.div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div
+        className="border-t pt-2.5 text-[11px] leading-[1.55] text-muted-foreground"
+        style={{ borderColor: "rgba(255,255,255,0.08)" }}
+      >
+        <span
+          className="mr-1.5 inline-block rounded-full px-2 py-0.5 text-[10px] font-extrabold tracking-[0.04em]"
+          style={{ background: "rgba(95,212,231,0.12)", color: "#5fd4e7" }}
+        >
+          Cash flow
+        </span>
+        leads early but{" "}
+        <span
+          className="mx-1.5 inline-block rounded-full px-2 py-0.5 text-[10px] font-extrabold tracking-[0.04em]"
+          style={{ background: "rgba(123,227,240,0.14)", color: "#7be3f0" }}
+        >
+          Equity build
+        </span>
+        takes over by year {crossover}.
+      </div>
+    </div>
+  );
+}
+
+export function PercentileCard({
+  zip,
+  percentile,
+  compCount,
+  limited,
+}: {
+  zip: string;
+  percentile: number;
+  compCount: number;
+  limited: boolean;
+}) {
+  // Tint + marker color follow the percentile band.
+  const band: "high" | "mid" | "low" =
+    percentile >= 60 ? "high" : percentile >= 40 ? "mid" : "low";
+  const tint = {
+    high: {
+      bg: "rgba(74,222,128,0.08)",
+      border: "rgba(74,222,128,0.25)",
+      marker: "#4ade80",
+      num: "#4ade80",
+    },
+    mid: {
+      bg: "rgba(95,212,231,0.06)",
+      border: "rgba(95,212,231,0.22)",
+      marker: "#5fd4e7",
+      num: "#5fd4e7",
+    },
+    low: {
+      bg: "rgba(239,68,68,0.08)",
+      border: "rgba(239,68,68,0.25)",
+      marker: "#f87171",
+      num: "#f87171",
+    },
+  }[band];
+
+  const ordinalSuffix = (n: number): string => {
+    const s = ["th", "st", "nd", "rd"];
+    const v = n % 100;
+    return s[(v - 20) % 10] || s[v] || s[0];
+  };
+
+  return (
+    <div
+      className="mb-3 rounded-2xl border p-3.5"
+      style={{ background: tint.bg, borderColor: tint.border }}
+      data-testid="card-percentile"
+    >
+      {limited ? (
+        <>
+          <div className="mb-1 text-[10px] font-bold tracking-[0.14em] text-muted-foreground">
+            COMP PERCENTILE
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span
+              className="font-display text-[20px] font-black leading-none tracking-[-0.01em] text-foreground"
+              data-testid="text-percentile-limited"
+            >
+              Limited comps
+            </span>
+          </div>
+          <p className="mt-2 text-[11px] leading-[1.5] text-muted-foreground">
+            Only {compCount} comparable {compCount === 1 ? "rental" : "rentals"}{" "}
+            in {zip}. Need at least 5 to rank this deal.
+          </p>
+        </>
+      ) : (
+        <>
+          <div className="flex items-center gap-4">
+            <div className="shrink-0">
+              <span
+                className="font-display text-[34px] font-black leading-none tracking-[-0.02em]"
+                style={{ color: tint.num }}
+                data-testid="text-percentile"
+              >
+                {percentile}
+                <span className="ml-1 text-[14px] font-bold text-muted-foreground">
+                  {ordinalSuffix(percentile)} %ile
+                </span>
+              </span>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                vs {zip} ZIP comps
+              </div>
+            </div>
+
+            <div className="relative flex-1">
+              <div
+                className="relative h-2 w-full rounded-full"
+                style={{ background: "#232c37" }}
+              >
+                <motion.div
+                  className="absolute left-0 top-0 h-full rounded-full"
+                  style={{
+                    background: "linear-gradient(90deg, #126D85, #5fd4e7)",
+                  }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${Math.max(0, Math.min(100, percentile))}%` }}
+                  transition={{ duration: 0.6, ease: "easeOut" }}
+                />
+                <motion.div
+                  className="absolute h-3.5 w-3.5 rounded-full"
+                  style={{
+                    top: "-3px",
+                    background: tint.marker,
+                    border: "3px solid #141a21",
+                    transform: "translateX(-50%)",
+                  }}
+                  initial={{ left: 0 }}
+                  animate={{ left: `${Math.max(0, Math.min(100, percentile))}%` }}
+                  transition={{ duration: 0.6, ease: "easeOut" }}
+                  data-testid="percentile-marker"
+                />
+              </div>
+              <div className="mt-1.5 flex justify-between text-[10px] font-bold text-muted-foreground">
+                <span>Weak</span>
+                <span>Median</span>
+                <span>Top</span>
+              </div>
+            </div>
+          </div>
+          <p className="mt-2.5 text-[11px] leading-[1.5] text-muted-foreground">
+            This deal cash-flows better than{" "}
+            <b className="font-bold text-foreground">{percentile}%</b> of{" "}
+            {compCount} comparable rentals in {zip}.
+          </p>
+        </>
+      )}
     </div>
   );
 }
