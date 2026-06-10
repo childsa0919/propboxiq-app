@@ -12,6 +12,8 @@ import NotFound from "@/pages/not-found";
 import Welcome from "@/pages/Welcome";
 import QuickWizard from "@/pages/QuickWizard";
 import QuickResult from "@/pages/QuickResult";
+import HoldWizard from "@/pages/HoldWizard";
+import HoldResult from "@/pages/HoldResult";
 import Detailed from "@/pages/Detailed";
 import DealPage from "@/pages/Deal";
 import Deals from "@/pages/Deals";
@@ -24,6 +26,8 @@ function AppRouter() {
       <Route path="/" component={Welcome} />
       <Route path="/quick" component={QuickWizard} />
       <Route path="/result/:id" component={QuickResult} />
+      <Route path="/hold" component={HoldWizard} />
+      <Route path="/hold/result" component={HoldResult} />
       <Route path="/detailed" component={Detailed} />
       <Route path="/deal/:id" component={DealPage} />
       <Route path="/deals" component={Deals} />
