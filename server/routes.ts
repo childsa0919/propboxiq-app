@@ -305,18 +305,75 @@ export async function registerRoutes(
     clearSessionCookie(res);
     res.json({ ok: true });
   });
-  // ----- Address autocomplete (Census Geocoder) -----
+  // ----- Address autocomplete -----
+  // Strategy: RentCast /properties first (resolves on partial street, no city
+  // required), then fall back to Census Geocoder (rigid "street + city" match)
+  // for anything RentCast doesn't cover. Census is also the source of
+  // lat/lon when RentCast doesn't include coordinates.
   app.get("/api/geocode", async (req: Request, res: Response) => {
     const q = String(req.query.q ?? "").trim();
     if (q.length < 4) {
       return res.json({ matches: [] });
     }
+
+    type Match = {
+      matchedAddress: string;
+      lat: number | null;
+      lon: number | null;
+      components: {
+        street: string;
+        city: string;
+        state: string;
+        zip: string;
+      };
+    };
+
+    // ---- Attempt 1: RentCast /properties (no city required) ----
+    // Gate by length + leading digit (i.e. "12704 Hill...") so we don't burn
+    // the quota on every partial keystroke. RentCast expects a house number
+    // anyway — "Hillmeade" alone returns nothing useful.
+    const looksLikeStreet = q.length >= 8 && /^\d/.test(q);
+    let rentcastMatches: Match[] = [];
+    if (looksLikeStreet) try {
+      const data: any = await rcGet("properties", { address: q });
+      if (Array.isArray(data)) {
+        rentcastMatches = data
+          .filter((p: any) => p?.formattedAddress)
+          .slice(0, 5)
+          .map((p: any) => ({
+            matchedAddress: String(p.formattedAddress),
+            lat: typeof p.latitude === "number" ? p.latitude : null,
+            lon: typeof p.longitude === "number" ? p.longitude : null,
+            components: {
+              street: String(p.addressLine1 ?? "").trim(),
+              city: String(p.city ?? "").trim(),
+              state: String(p.state ?? "").trim(),
+              zip: String(p.zipCode ?? "").trim(),
+            },
+          }));
+      }
+    } catch (e) {
+      // typed errors → fall through to Census silently
+      if (
+        !(e instanceof RentCastAuthError) &&
+        !(e instanceof RentCastRateLimitError) &&
+        !(e instanceof RentCastUpstreamError)
+      ) {
+        console.warn("[geocode] rentcast error:", (e as Error).message);
+      }
+    }
+
+    if (rentcastMatches.length > 0) {
+      return res.json({ matches: rentcastMatches });
+    }
+
+    // ---- Attempt 2: Census Geocoder fallback ----
     try {
       const url = `${CENSUS_BASE}?address=${encodeURIComponent(
         q
       )}&benchmark=Public_AR_Current&format=json`;
       const data: any = await fetchJson(url);
-      const matches = (data?.result?.addressMatches ?? []).map((m: any) => ({
+      const matches: Match[] = (data?.result?.addressMatches ?? []).map((m: any) => ({
         matchedAddress: m.matchedAddress as string,
         lat: m.coordinates?.y as number,
         lon: m.coordinates?.x as number,
