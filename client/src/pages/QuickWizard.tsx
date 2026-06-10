@@ -7,6 +7,7 @@ import {
   type AddressMatch,
 } from "@/components/AddressAutocomplete";
 import { Button } from "@/components/ui/button";
+import { DealTypeGateway, type DealType } from "@/components/DealTypeGateway";
 import {
   Select,
   SelectContent,
@@ -33,6 +34,8 @@ import { fmtUSD } from "@/lib/calc";
 
 type Step = 0 | 1 | 2 | 3;
 const STEP_COUNT = 4;
+// Strategy gateway is Step 1 of the flow; the 4 Flip steps below are Steps 2..5.
+const TOTAL_STEPS = STEP_COUNT + 1;
 
 // Shape returned by /api/comps
 type CompsResponse = {
@@ -76,6 +79,7 @@ type CompsResponse = {
 
 export default function QuickWizard() {
   const [, navigate] = useLocation();
+  const [passedGateway, setPassedGateway] = useState(false);
   const [step, setStep] = useState<Step>(0);
   const [direction, setDirection] = useState<1 | -1>(1);
 
@@ -317,8 +321,18 @@ export default function QuickWizard() {
       setDirection(-1);
       setStep((s) => (s - 1) as Step);
     } else {
-      navigate("/");
+      // Back from the first Flip step returns to the strategy gateway.
+      setPassedGateway(false);
     }
+  }
+
+  function handleGatewayContinue(type: DealType) {
+    if (type === "hold") {
+      navigate("/hold");
+      return;
+    }
+    setDirection(1);
+    setPassedGateway(true);
   }
 
   // On step 3, can advance only if we have an ARV value (auto or manual)
@@ -351,15 +365,15 @@ export default function QuickWizard() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={back}
+          onClick={passedGateway ? back : () => navigate("/")}
           data-testid="button-back"
           className="-ml-3"
         >
           <ArrowLeft className="h-4 w-4 mr-1.5" />
-          {step === 0 ? "Home" : "Back"}
+          {!passedGateway ? "Home" : "Back"}
         </Button>
         <span className="mono-eyebrow text-[11px] tracking-[0.18em]">
-          Step {step + 1} of {STEP_COUNT}
+          Step {passedGateway ? step + 2 : 1} of {TOTAL_STEPS}
         </span>
         <span className="w-12" />
       </div>
@@ -370,6 +384,13 @@ export default function QuickWizard() {
         style={{ padding: "26px 22px 22px" }}
       >
         <div onKeyDown={onKey} className="min-h-[380px] flex flex-col">
+          {!passedGateway ? (
+            <DealTypeGateway
+              defaultType="flip"
+              onContinue={handleGatewayContinue}
+            />
+          ) : (
+          <>
           <AnimatePresence mode="wait" custom={direction}>
           <motion.div
             key={step}
@@ -481,13 +502,14 @@ export default function QuickWizard() {
           </motion.div>
         </AnimatePresence>
 
-          {/* Segmented progress indicator (matches mock — bars at bottom of card) */}
+          {/* Segmented progress indicator (matches mock — bars at bottom of card).
+              First segment is the completed strategy gateway. */}
           <div className="mt-8 flex gap-1.5">
-            {Array.from({ length: STEP_COUNT }).map((_, i) => (
+            {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
               <div
                 key={i}
                 className={`flex-1 h-1 rounded-full transition-all duration-300 ${
-                  i <= step ? "bg-primary" : "bg-card-border"
+                  i <= step + 1 ? "bg-primary" : "bg-card-border"
                 }`}
                 aria-hidden
               />
@@ -501,10 +523,14 @@ export default function QuickWizard() {
                 ? "Press Enter or hit Calculate."
                 : "Press Enter to continue."}
           </p>
+          </>
+          )}
         </div>
       </div>
 
-      {/* Fixed Continue CTA at bottom (matches mock) */}
+      {/* Fixed Continue CTA at bottom (matches mock). Hidden on the gateway,
+          which carries its own Continue button. */}
+      {passedGateway && (
       <div
         className="fixed bottom-0 inset-x-0 z-50 px-4 sm:px-6 pt-4 bg-gradient-to-t from-background via-background/95 to-transparent"
         style={{
@@ -535,6 +561,7 @@ export default function QuickWizard() {
           </Button>
         </div>
       </div>
+      )}
     </div>
   );
 }

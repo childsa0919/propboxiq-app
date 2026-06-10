@@ -311,6 +311,15 @@
     color: var(--brand-cyan-bright);
   }
 
+  /* Deal-type gateway title accent — locked Coastal Teal on light, cyan-bright
+     on the dark teal canvas (mirrors .mono-eyebrow) so the word stays legible. */
+  .gateway-accent {
+    color: var(--brand-teal);
+  }
+  html.dark .gateway-accent {
+    color: var(--brand-cyan-bright);
+  }
+
   /* ---------- Glass card utility (Direction A Deal Card) ---------- */
   .glass-card {
     background: linear-gradient(155deg, rgba(255,255,255,0.96), rgba(255,255,255,0.82));
