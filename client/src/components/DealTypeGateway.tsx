@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Check, TrendingUp, Home, DollarSign } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Check, Pencil, Home, DollarSign, ArrowRight, TrendingUp } from "lucide-react";
 import { NewBadge } from "@/components/ui/NewBadge";
 import { cn } from "@/lib/utils";
 
@@ -23,7 +22,7 @@ const STRATEGIES: StrategyMeta[] = [
     name: "Flip",
     desc: "Find margin fast with ARV, rehab logic, and resale comps.",
     metricLabel: "ARV spread",
-    Icon: TrendingUp,
+    Icon: Pencil,
     MetricIcon: TrendingUp,
     isNew: false,
   },
@@ -83,7 +82,7 @@ export function DealTypeGateway({
         Choose the strategy first so we score the property the right way.
       </p>
 
-      <div className="flex flex-1 flex-col gap-3.5 sm:flex-row">
+      <div className="flex flex-1 flex-col gap-3 sm:flex-row">
         {STRATEGIES.map((s) => (
           <StrategyCard
             key={s.type}
@@ -95,17 +94,26 @@ export function DealTypeGateway({
       </div>
 
       <div className="mt-5">
-        <Button
-          size="lg"
+        <button
+          type="button"
           onClick={() => onContinue(selected)}
           disabled={!selected}
           data-testid="button-gateway-continue"
-          className="h-12 w-full rounded-2xl font-semibold tracking-tight
-                     shadow-[0_10px_30px_-12px_rgba(18,109,133,0.55)]
-                     dark:shadow-[0_8px_24px_rgba(95,212,231,0.30)]"
+          style={{ backgroundColor: "var(--brand-teal)" }}
+          className={cn(
+            "flex h-[52px] w-full items-center justify-center gap-2 rounded-[14px] text-[14px] font-extrabold text-white transition-all duration-200",
+            "shadow-[0_12px_30px_-10px_rgba(18,109,133,0.7)]",
+            selected
+              ? "cursor-pointer hover:brightness-110 active:scale-[0.99]"
+              : "cursor-not-allowed opacity-40 shadow-none",
+          )}
         >
           Continue
-        </Button>
+          <ArrowRight className="h-[18px] w-[18px]" strokeWidth={2.5} />
+        </button>
+        <p className="mt-2.5 text-center text-xs font-bold text-white/40">
+          Pick a strategy to continue
+        </p>
       </div>
     </div>
   );
@@ -129,11 +137,17 @@ function StrategyCard({
       whileTap={{ scale: 0.985 }}
       data-testid={`card-strategy-${meta.type}`}
       aria-pressed={selected}
+      style={{
+        background: selected
+          ? "linear-gradient(135deg, rgba(18,109,133,0.25) 0%, rgba(18,109,133,0.05) 100%), #1c242d"
+          : "#1c242d",
+        borderColor: selected ? "rgba(95,212,231,0.55)" : "rgba(255,255,255,0.08)",
+      }}
       className={cn(
-        "relative flex flex-1 flex-col overflow-hidden rounded-[20px] border p-[22px] text-left transition-all duration-200",
+        "relative flex flex-1 flex-col overflow-hidden rounded-[22px] border p-[22px] text-left transition-all duration-200",
         selected
-          ? "border-accent/55 bg-accent/[0.12] shadow-[0_0_0_2px_rgba(95,212,231,0.18),0_20px_50px_-20px_rgba(18,109,133,0.6),0_0_80px_-10px_rgba(95,212,231,0.25)]"
-          : "border-card-border bg-card hover-elevate",
+          ? "shadow-[0_0_0_2px_rgba(95,212,231,0.22),0_18px_44px_-22px_rgba(18,109,133,0.65),0_0_42px_-14px_rgba(95,212,231,0.4)]"
+          : "",
       )}
     >
       {selected && (
@@ -149,11 +163,16 @@ function StrategyCard({
 
       <div className="mb-3.5 flex items-start gap-3.5">
         <div
+          style={
+            selected
+              ? { background: "linear-gradient(135deg, #126D85 0%, #1a8aa6 100%)", borderColor: "var(--brand-cyan)" }
+              : { background: "#232c37", borderColor: "rgba(255,255,255,0.14)" }
+          }
           className={cn(
             "flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl border transition-all duration-200",
             selected
-              ? "border-accent bg-primary text-primary-foreground shadow-[0_8px_20px_-8px_rgba(18,109,133,0.7)]"
-              : "border-card-border bg-muted text-muted-foreground",
+              ? "text-white shadow-[0_8px_20px_-8px_rgba(18,109,133,0.7)]"
+              : "text-muted-foreground",
           )}
         >
           <Icon className="h-[22px] w-[22px]" strokeWidth={1.8} />
@@ -177,11 +196,12 @@ function StrategyCard({
         </div>
 
         <span
+          style={selected ? undefined : { borderColor: "rgba(255,255,255,0.14)" }}
           className={cn(
             "flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border-[1.5px] transition-all duration-200",
             selected
               ? "border-accent bg-accent shadow-[0_0_12px_rgba(95,212,231,0.5)]"
-              : "border-card-border",
+              : "",
           )}
         >
           <Check
@@ -205,15 +225,14 @@ function StrategyCard({
       </p>
 
       <div
-        className={cn(
-          "mt-auto flex items-center gap-2.5 border-t pt-3.5",
-          selected ? "border-accent/20" : "border-card-border",
-        )}
+        style={{ borderTopColor: selected ? "rgba(95,212,231,0.18)" : "rgba(255,255,255,0.08)" }}
+        className="mt-auto flex items-center gap-2.5 border-t pt-3.5"
       >
         <span
+          style={selected ? undefined : { background: "#232c37" }}
           className={cn(
             "flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-md",
-            selected ? "bg-accent/[0.18] text-accent" : "bg-muted text-muted-foreground",
+            selected ? "bg-accent/[0.18] text-accent" : "text-muted-foreground",
           )}
         >
           <MetricIcon className="h-[13px] w-[13px]" strokeWidth={2} />

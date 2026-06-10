@@ -320,6 +320,39 @@
     color: var(--brand-cyan-bright);
   }
 
+  /* ---------- Wizard ink canvas (deal-type gateway) ----------
+     The global body gradient is a teal wash; the gateway mock uses a near-black
+     ink canvas so the teal only reads as card / CTA / selected accents. This
+     overrides the body wash for the wizard route only — Welcome and the rest of
+     the app keep the teal canvas. */
+  .wizard-canvas {
+    position: relative;
+    isolation: isolate;
+    min-height: 100vh;
+  }
+  .wizard-canvas::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(1200px 600px at 80% -200px, rgba(18,109,133,0.18), transparent 60%),
+      radial-gradient(800px 400px at 0% 100%, rgba(95,212,231,0.06), transparent 60%),
+      var(--brand-ink);
+  }
+
+  /* Gateway screen surface — matches the mock's .screen (ink-2 fill + faint
+     top cyan glow) instead of the frosted glass card used elsewhere. */
+  .wizard-screen {
+    background:
+      radial-gradient(400px 200px at 50% 0%, rgba(95,212,231,0.05), transparent 70%),
+      #141a21;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 24px;
+    box-shadow: 0 40px 100px -30px rgba(0,0,0,0.7);
+  }
+
   /* ---------- Glass card utility (Direction A Deal Card) ---------- */
   .glass-card {
     background: linear-gradient(155deg, rgba(255,255,255,0.96), rgba(255,255,255,0.82));

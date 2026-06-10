@@ -29,6 +29,7 @@ import {
   Sparkles,
   RefreshCw,
   Home,
+  X,
 } from "lucide-react";
 import { fmtUSD } from "@/lib/calc";
 
@@ -353,34 +354,67 @@ export default function QuickWizard() {
     }
   }
 
+  // The locked design positions the gateway as Step 1 of a 7-step flow
+  // (strategy gate + 6 downstream steps). The current Flip path only ships 4 of
+  // those, but the gateway header mirrors the design's 7-step total.
+  const GATEWAY_TOTAL = 7;
+
   return (
     <div
-      className="mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-10"
+      className={`${passedGateway ? "" : "wizard-canvas"} mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-10`}
       style={{
         paddingBottom: "calc(8rem + env(safe-area-inset-bottom, 0px))",
       }}
     >
-      {/* Header: back + step indicator (mono eyebrow style) */}
-      <div className="flex items-center justify-between mb-6">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={passedGateway ? back : () => navigate("/")}
-          data-testid="button-back"
-          className="-ml-3"
-        >
-          <ArrowLeft className="h-4 w-4 mr-1.5" />
-          {!passedGateway ? "Home" : "Back"}
-        </Button>
-        <span className="mono-eyebrow text-[11px] tracking-[0.18em]">
-          Step {passedGateway ? step + 2 : 1} of {TOTAL_STEPS}
-        </span>
-        <span className="w-12" />
-      </div>
+      {!passedGateway ? (
+        /* Gateway chrome — matches the locked mock: ✕ Cancel / STEP 1/7 + a thin
+           teal progress bar that fills proportional to the current step. */
+        <div className="mb-5">
+          <div className="flex items-center justify-between mb-3.5">
+            <button
+              type="button"
+              onClick={() => navigate("/")}
+              data-testid="button-back"
+              className="flex items-center gap-1 text-[12px] font-bold text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="h-3.5 w-3.5" strokeWidth={2.5} />
+              Cancel
+            </button>
+            <span className="text-[10px] font-bold tracking-[0.14em] text-muted-foreground">
+              STEP <span className="text-accent">1</span>/{GATEWAY_TOTAL}
+            </span>
+          </div>
+          <div className="h-[3px] w-full overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-primary"
+              style={{ width: `${(1 / GATEWAY_TOTAL) * 100}%` }}
+            />
+          </div>
+        </div>
+      ) : (
+        /* Header: back + step indicator (mono eyebrow style) */
+        <div className="flex items-center justify-between mb-6">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={back}
+            data-testid="button-back"
+            className="-ml-3"
+          >
+            <ArrowLeft className="h-4 w-4 mr-1.5" />
+            Back
+          </Button>
+          <span className="mono-eyebrow text-[11px] tracking-[0.18em]">
+            Step {step + 2} of {TOTAL_STEPS}
+          </span>
+          <span className="w-12" />
+        </div>
+      )}
 
-      {/* Glass card hosting the form */}
+      {/* Card hosting the form — ink "screen" surface on the gateway, frosted
+          glass on the downstream Flip steps. */}
       <div
-        className="glass-card relative overflow-hidden"
+        className={`${passedGateway ? "glass-card" : "wizard-screen"} relative overflow-hidden`}
         style={{ padding: "26px 22px 22px" }}
       >
         <div onKeyDown={onKey} className="min-h-[380px] flex flex-col">
