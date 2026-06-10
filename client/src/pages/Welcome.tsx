@@ -4,10 +4,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { defaultDealInputs, type Deal } from "@shared/schema";
 import { calculateDeal, fmtUSD, fmtPct } from "@/lib/calc";
-import { ArrowRight, MapPin, Trash2, TrendingUp, Home } from "lucide-react";
+import { ArrowRight, MapPin, Trash2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { DealCard as PreviewDealCard } from "@/components/DealCard";
-import { NewBadge } from "@/components/ui/NewBadge";
 
 /**
  * Welcome — Direction A · Coastal Teal.
@@ -69,65 +68,31 @@ export default function Welcome() {
         />
       </motion.section>
 
-      {/* Variant B — Flip primary hero + Hold secondary card */}
-      <section className="flex flex-col gap-3.5 mb-12">
-        {/* Flip = primary hero */}
+      {/* Primary + secondary CTAs */}
+      <section className="flex flex-col gap-3 mb-12">
         <Link href="/quick" data-testid="link-mode-quick">
-          <div
-            className="relative overflow-hidden rounded-[18px] border border-accent/30 p-[22px]
-                       text-white active:scale-[0.99] transition-transform"
-            style={{
-              background:
-                "linear-gradient(135deg, var(--brand-teal) 0%, #1a8aa6 100%)",
-            }}
+          <button
+            type="button"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-2xl
+                       bg-primary text-primary-foreground
+                       px-6 py-4 text-base font-semibold
+                       shadow-[0_10px_30px_-12px_rgba(18,109,133,0.55)]
+                       hover:opacity-95 active:scale-[0.99] transition-all"
           >
-            <span
-              aria-hidden
-              className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full"
-              style={{
-                background:
-                  "radial-gradient(circle, rgba(95,212,231,0.3) 0%, transparent 70%)",
-              }}
-            />
-            <span className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-extrabold tracking-[0.08em]">
-              <TrendingUp className="h-3 w-3" strokeWidth={2.4} />
-              QUICK FLIP
-            </span>
-            <h2 className="font-display text-[22px] font-bold tracking-[-0.02em]">
-              Flip
-            </h2>
-            <p className="mt-1 mb-4 text-[12px] leading-[1.5] text-white/85">
-              ARV, profit, MAO, and holding costs in under a minute.
-            </p>
-            <span className="inline-flex items-center gap-2 rounded-[10px] bg-white px-4 py-2.5 text-[13px] font-bold text-primary">
-              Analyze a flip
-              <ArrowRight className="h-4 w-4" strokeWidth={2.4} />
-            </span>
-          </div>
+            Score a property
+            <ArrowRight className="h-4 w-4" strokeWidth={2.4} />
+          </button>
         </Link>
-
-        {/* Hold = secondary smaller card */}
-        <Link href="/hold" data-testid="link-mode-hold">
-          <div className="flex items-center gap-3.5 rounded-[14px] border border-card-border bg-card p-3.5 hover-elevate active:scale-[0.99] transition-transform">
-            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[9px] bg-muted text-muted-foreground">
-              <Home className="h-4 w-4" strokeWidth={1.9} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="mb-0.5 text-[9px] font-bold tracking-[0.14em] text-muted-foreground/70">
-                ALSO NEW
-              </div>
-              <h3 className="flex items-center gap-1.5 text-[14px] font-bold text-foreground">
-                Hold <NewBadge />
-              </h3>
-              <p className="mt-0.5 text-[11px] leading-[1.4] text-muted-foreground">
-                Cash flow, expenses, and long-term upside.
-              </p>
-            </div>
-            <ArrowRight
-              className="h-4 w-4 flex-shrink-0 text-muted-foreground"
-              strokeWidth={2}
-            />
-          </div>
+        <Link href="/detailed" data-testid="link-mode-detailed">
+          <button
+            type="button"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-2xl
+                       border border-card-border bg-card/40 backdrop-blur
+                       px-6 py-3.5 text-sm font-medium text-foreground
+                       hover-elevate active:scale-[0.99] transition-all"
+          >
+            Switch to detailed mode
+          </button>
         </Link>
       </section>
 
