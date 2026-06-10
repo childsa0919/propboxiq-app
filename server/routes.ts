@@ -928,12 +928,14 @@ export async function registerRoutes(
 
     // Current month (RentCast top-level saleData) + most-recent prior month
     // from saleData.history (keyed by YYYY-MM) for MoM deltas.
+    // history[] includes the CURRENT month at index 0 when sorted desc; the
+    // prior month for MoM math is index 1.
     const saleData: any = market?.saleData ?? null;
     const history: Record<string, any> = (saleData?.history && typeof saleData.history === "object")
       ? saleData.history
       : {};
     const histKeys = Object.keys(history).sort().reverse();
-    const prevSnap: any = histKeys[0] ? history[histKeys[0]] : null;
+    const prevSnap: any = histKeys[1] ? history[histKeys[1]] : null;
 
     const num = (v: unknown): number | null => {
       const n = Number(v);
