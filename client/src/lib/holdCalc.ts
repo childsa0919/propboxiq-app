@@ -345,6 +345,110 @@ export function calculateHold(i: HoldInputs): HoldResults {
   };
 }
 
+// --- Crossover Year (10-year return buildup) ------------------------------
+
+/**
+ * Cumulative principal paid over the first `months` payments of a fully-
+ * amortizing loan. Used for equity-build accumulation. Excludes appreciation —
+ * pure paydown.
+ */
+export function sumPrincipalPaid(
+  loanAmount: number,
+  annualRatePct: number,
+  termYears: number,
+  months: number,
+): number {
+  if (loanAmount <= 0 || months <= 0) return 0;
+  const monthlyPI = amortizedPayment(loanAmount, annualRatePct, termYears);
+  const r = pct(annualRatePct) / 12;
+  let balance = loanAmount;
+  let principalPaid = 0;
+  const cap = Math.min(months, termYears * 12);
+  for (let m = 0; m < cap; m++) {
+    const interest = balance * r;
+    const principal = monthlyPI - interest;
+    principalPaid += principal;
+    balance -= principal;
+  }
+  return Math.max(0, principalPaid);
+}
+
+export interface CrossoverResult {
+  cashFlow10yr: number; // simple monthly cash flow × 12 × 10
+  equityBuild10yr: number; // cumulative principal paydown over 120 months
+  totalReturn10yr: number; // cashFlow10yr + equityBuild10yr
+  /**
+   * First whole year (1-10) where cumulative equity build overtakes cumulative
+   * cash flow, or null when it never crosses within 10 years.
+   */
+  crossover: number | null;
+}
+
+/**
+ * 10-year return buildup + the crossover year. Appreciation is intentionally
+ * excluded — this is cash flow vs. principal paydown only. `monthlyCashFlow`
+ * is the deal's net monthly figure (may be negative).
+ */
+export function crossoverYear(
+  monthlyCashFlow: number,
+  loanAmount: number,
+  annualRatePct: number,
+  termYears: number,
+): CrossoverResult {
+  const cashFlow10yr = monthlyCashFlow * 12 * 10;
+  const equityBuild10yr = sumPrincipalPaid(loanAmount, annualRatePct, termYears, 120);
+  const totalReturn10yr = cashFlow10yr + equityBuild10yr;
+
+  let crossover: number | null = null;
+  for (let y = 1; y <= 10; y++) {
+    const cumCashFlow = monthlyCashFlow * 12 * y;
+    const cumEquity = sumPrincipalPaid(loanAmount, annualRatePct, termYears, y * 12);
+    if (cumEquity > cumCashFlow) {
+      crossover = y;
+      break;
+    }
+  }
+
+  return { cashFlow10yr, equityBuild10yr, totalReturn10yr, crossover };
+}
+
+// --- Comp percentile -------------------------------------------------------
+
+export interface PercentileResult {
+  percentile: number; // 0-100, rounded
+  compCount: number;
+  limited: boolean; // true when fewer than the minimum usable comps
+}
+
+/** Reserve drag applied to comp rents when synthesizing their cash flow.
+ * 23% = vacancy 5 + management 8 + maintenance 5 + capex 5. */
+export const COMP_RESERVE_RATIO = 0.23;
+
+const MIN_COMPS = 5;
+
+/**
+ * Rank the subject's monthly cash flow against a set of comparable rents. Each
+ * comp rent is converted to the cash flow it WOULD produce at the subject's
+ * purchase price + loan terms (subjectPITI held constant; only rent varies).
+ * Percentile = fraction of comps with lower cash flow than the subject.
+ */
+export function compPercentile(
+  subjectCashFlow: number,
+  compRents: number[],
+  subjectPITI: number,
+): PercentileResult {
+  const valid = compRents.filter((r) => Number.isFinite(r) && r > 0);
+  if (valid.length < MIN_COMPS) {
+    return { percentile: 0, compCount: valid.length, limited: true };
+  }
+  const compCashFlows = valid.map(
+    (rent) => rent - subjectPITI - rent * COMP_RESERVE_RATIO,
+  );
+  const lowerCount = compCashFlows.filter((cf) => cf < subjectCashFlow).length;
+  const percentile = Math.round((lowerCount / compCashFlows.length) * 100);
+  return { percentile, compCount: valid.length, limited: false };
+}
+
 export type DivergenceFlavor = {
   kind: "unicorn" | "slow-burn" | "cash-cow" | "pass";
   tone: "gold" | "red";

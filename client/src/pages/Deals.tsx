@@ -47,8 +47,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { exportComparePdf, exportComparePdfBlob } from "@/lib/exportPdf";
 import { EmailPdfDialog } from "@/components/EmailPdfDialog";
+import {
+  readSavedHolds,
+  removeSavedHold,
+  holdResultPath,
+  type SavedHold,
+} from "@/lib/savedHolds";
 
 type SortKey = "newest" | "recent" | "profit" | "roi" | "address";
+type DealBucket = "all" | "flips" | "holds";
 type ArchiveTab = "active" | "archived";
 type ProfitFilter = "all" | "profitable" | "unprofitable";
 type DataFilter = "all" | "has-comps" | "missing-data";
@@ -81,6 +88,13 @@ export default function Deals() {
   const [profitFilter, setProfitFilter] = useState<ProfitFilter>("all");
   const [dataFilter, setDataFilter] = useState<DataFilter>("all");
   const [archiveTab, setArchiveTab] = useState<ArchiveTab>("active");
+  const [bucket, setBucket] = useState<DealBucket>("all");
+
+  // Hold deals are persisted client-side (localStorage), not on the server.
+  const [holds, setHolds] = useState<SavedHold[]>(() => readSavedHolds());
+  function refreshHolds() {
+    setHolds(readSavedHolds());
+  }
 
   // Compare mode
   const [compareMode, setCompareMode] = useState(false);
@@ -271,7 +285,8 @@ export default function Deals() {
               ) : (
                 <>
                   <span data-testid="text-deal-count">
-                    {totals.total} {totals.total === 1 ? "deal" : "deals"} saved
+                    {totals.total + holds.length}{" "}
+                    {totals.total + holds.length === 1 ? "deal" : "deals"} saved
                   </span>
                   {totals.withNums > 0 && (
                     <span className="text-muted-foreground/80">
@@ -368,8 +383,41 @@ export default function Deals() {
         </div>
       )}
 
-      {/* Search + sort + filters */}
+      {/* All / Flips / Holds segment control */}
       {!compareMode && (
+        <div
+          className="mb-4 grid grid-cols-3 gap-1 rounded-xl border border-card-border p-1"
+          role="tablist"
+          aria-label="Deal type"
+        >
+          {(
+            [
+              { v: "all", l: "All" },
+              { v: "flips", l: "Flips" },
+              { v: "holds", l: "Holds" },
+            ] as { v: DealBucket; l: string }[]
+          ).map((opt) => (
+            <button
+              key={opt.v}
+              type="button"
+              role="tab"
+              aria-selected={bucket === opt.v}
+              onClick={() => setBucket(opt.v)}
+              className={`min-h-[44px] rounded-lg text-[13px] font-bold tracking-tight transition-colors ${
+                bucket === opt.v
+                  ? "bg-primary text-primary-foreground shadow-[0_4px_14px_-4px_rgba(18,109,133,0.4)]"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid={`bucket-${opt.v}`}
+            >
+              {opt.l}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Search + sort + filters */}
+      {!compareMode && bucket !== "holds" && (
         <div className="mb-5 space-y-2.5">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -531,9 +579,29 @@ export default function Deals() {
             </Card>
           ))}
         </div>
-      ) : deals.length === 0 ? (
+      ) : bucket === "holds" ? (
+        holds.length === 0 ? (
+          <EmptyState navigate={navigate} variant="no-holds" />
+        ) : (
+          <div className="space-y-3">
+            {holds.map((h) => (
+              <HoldRow
+                key={h.savedAt}
+                hold={h}
+                onOpen={() => navigate(holdResultPath(h))}
+                onDelete={() => {
+                  removeSavedHold(h.savedAt);
+                  refreshHolds();
+                }}
+              />
+            ))}
+          </div>
+        )
+      ) : bucket === "flips" && deals.length === 0 ? (
+        <EmptyState navigate={navigate} variant="no-flips" />
+      ) : deals.length === 0 && holds.length === 0 ? (
         <EmptyState navigate={navigate} variant="no-deals" />
-      ) : filtered.length === 0 ? (
+      ) : filtered.length === 0 && (bucket === "flips" || holds.length === 0) ? (
         <EmptyState
           navigate={navigate}
           variant="no-results"
@@ -568,6 +636,20 @@ export default function Deals() {
               }
             />
           ))}
+          {/* In the All bucket, Hold deals follow the Flip deals. */}
+          {bucket === "all" &&
+            !compareMode &&
+            holds.map((h) => (
+              <HoldRow
+                key={h.savedAt}
+                hold={h}
+                onOpen={() => navigate(holdResultPath(h))}
+                onDelete={() => {
+                  removeSavedHold(h.savedAt);
+                  refreshHolds();
+                }}
+              />
+            ))}
         </div>
       )}
 
@@ -870,13 +952,129 @@ function DealRow({
   );
 }
 
+function HoldRow({
+  hold,
+  onOpen,
+  onDelete,
+}: {
+  hold: SavedHold;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const cashFlowPositive = hold.monthlyCashFlow >= 0;
+  const savedDate = (() => {
+    const d = new Date(hold.savedAt);
+    return Number.isNaN(d.getTime())
+      ? ""
+      : d.toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+  })();
+
+  return (
+    <div
+      className="glass-card group cursor-pointer transition-all"
+      onClick={onOpen}
+      data-testid={`card-hold-${hold.savedAt}`}
+      style={{ padding: "14px 16px", borderRadius: 14 }}
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          {/* Address + HOLD tag */}
+          <div className="flex items-center gap-2">
+            <span
+              className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-extrabold tracking-[0.1em]"
+              style={{ background: "rgba(95,212,231,0.12)", color: "#5fd4e7" }}
+            >
+              HOLD
+            </span>
+            <p
+              className="text-[15px] font-bold leading-snug truncate text-foreground tracking-[-0.01em]"
+              data-testid={`text-hold-address-${hold.savedAt}`}
+            >
+              {hold.address || "Hold deal"}
+            </p>
+          </div>
+
+          {/* Dual score badges */}
+          <div className="mt-2 flex items-center gap-2">
+            <span
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-extrabold tabular-nums"
+              style={{ background: "rgba(18,109,133,0.18)", color: "#5fd4e7" }}
+              data-testid={`badge-hold-long-${hold.savedAt}`}
+            >
+              LT {hold.longScore}
+            </span>
+            <span
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-extrabold tabular-nums"
+              style={{ background: "rgba(18,109,133,0.18)", color: "#5fd4e7" }}
+              data-testid={`badge-hold-short-${hold.savedAt}`}
+            >
+              ST {hold.shortScore}
+            </span>
+            <span
+              className={`text-[13px] font-extrabold tabular-nums ${
+                cashFlowPositive
+                  ? "text-[hsl(var(--success))]"
+                  : "text-destructive"
+              }`}
+              data-testid={`text-hold-cashflow-${hold.savedAt}`}
+            >
+              {cashFlowPositive ? "+" : "−"}
+              {fmtUSD(Math.abs(hold.monthlyCashFlow))}/mo
+            </span>
+          </div>
+
+          {savedDate && (
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              Saved {savedDate}
+            </p>
+          )}
+        </div>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              onClick={(e) => e.stopPropagation()}
+              className="shrink-0 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
+              aria-label="Hold deal actions"
+              data-testid={`button-hold-menu-${hold.savedAt}`}
+            >
+              <MoreVertical className="h-4 w-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <DropdownMenuItem
+              onClick={() => {
+                if (confirm("Delete this hold deal? This cannot be undone.")) {
+                  onDelete();
+                }
+              }}
+              className="text-destructive focus:text-destructive"
+              data-testid={`menu-hold-delete-${hold.savedAt}`}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  );
+}
+
 function EmptyState({
   navigate,
   variant,
   onClear,
 }: {
   navigate: (path: string) => void;
-  variant: "no-deals" | "no-results";
+  variant: "no-deals" | "no-results" | "no-flips" | "no-holds";
   onClear?: () => void;
 }) {
   if (variant === "no-deals") {
@@ -889,7 +1087,7 @@ function EmptyState({
           <div>
             <p className="text-sm font-medium mb-1">No saved deals yet</p>
             <p className="text-xs text-muted-foreground">
-              Analyze a flip and it will show up here.
+              Analyze a flip or hold and it will show up here.
             </p>
           </div>
           <Button
@@ -898,6 +1096,56 @@ function EmptyState({
             data-testid="button-empty-analyze"
           >
             Analyze a flip
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+  if (variant === "no-flips") {
+    return (
+      <Card>
+        <CardContent className="p-8 text-center space-y-4">
+          <div className="mx-auto h-12 w-12 rounded-2xl bg-secondary flex items-center justify-center">
+            <Plus className="h-5 w-5 text-muted-foreground" />
+          </div>
+          <div>
+            <p className="text-sm font-medium mb-1">No flip deals saved yet</p>
+            <p className="text-xs text-muted-foreground">
+              Run a flip analysis to start your pipeline.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => navigate("/quick")}
+            data-testid="button-empty-start-flip"
+          >
+            Start a Flip
+            <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+  if (variant === "no-holds") {
+    return (
+      <Card>
+        <CardContent className="p-8 text-center space-y-4">
+          <div className="mx-auto h-12 w-12 rounded-2xl bg-secondary flex items-center justify-center">
+            <Plus className="h-5 w-5 text-muted-foreground" />
+          </div>
+          <div>
+            <p className="text-sm font-medium mb-1">No hold deals saved yet</p>
+            <p className="text-xs text-muted-foreground">
+              Run a hold analysis to start your rental pipeline.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => navigate("/hold")}
+            data-testid="button-empty-start-hold"
+          >
+            Start a Hold
+            <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
           </Button>
         </CardContent>
       </Card>

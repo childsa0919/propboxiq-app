@@ -96,6 +96,32 @@ export function estimatePropertyTax(purchasePrice: number): number {
   return purchasePrice * 0.0105;
 }
 
+/**
+ * Synthesize a comp-rent distribution from the RentCast rent band (low /
+ * median / high) and the reported comp count. RentCast gives us the band, not
+ * the individual comps, so we reconstruct a plausible distribution: an evenly
+ * spaced ramp from low→median across the lower half and median→high across the
+ * upper half, sized to `rentCompCount`. Returns [] when the band is missing.
+ */
+export function synthCompRents(s: HoldWizardState): number[] {
+  const { rentLow, rentMedian, rentHigh, rentCompCount } = s;
+  if (rentLow == null || rentMedian == null || rentHigh == null) return [];
+  if (!(rentHigh > rentLow)) return [];
+  const n = Math.max(0, Math.round(rentCompCount ?? 0));
+  if (n < 2) return [];
+  const out: number[] = [];
+  const half = Math.floor(n / 2);
+  for (let i = 0; i < half; i++) {
+    const t = half <= 1 ? 0 : i / (half - 1);
+    out.push(rentLow + t * (rentMedian - rentLow));
+  }
+  for (let i = 0; i < n - half; i++) {
+    const t = n - half <= 1 ? 0 : i / (n - half - 1);
+    out.push(rentMedian + t * (rentHigh - rentMedian));
+  }
+  return out;
+}
+
 // --- URL serialization ---------------------------------------------------
 
 const NUM_KEYS: (keyof HoldWizardState)[] = [
