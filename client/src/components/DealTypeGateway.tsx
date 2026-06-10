@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Check, Pencil, Home, DollarSign, ArrowRight, TrendingUp } from "lucide-react";
 import { NewBadge } from "@/components/ui/NewBadge";
@@ -64,8 +64,14 @@ export function DealTypeGateway({
   onContinue: (type: DealType) => void;
 }) {
   const [selected, setSelected] = useState<DealType>(defaultType);
+  // Mirror `selected` in a ref so Continue advances on the FIRST tap. Reading
+  // state directly inside the click closure can lag a just-committed card
+  // switch on touch, which surfaced as "tap Continue, nothing happens, tap
+  // again to advance." The ref always holds the latest choice.
+  const selectedRef = useRef<DealType>(defaultType);
 
   function select(type: DealType) {
+    selectedRef.current = type;
     setSelected(type);
     triggerHaptic();
   }
@@ -96,7 +102,7 @@ export function DealTypeGateway({
       <div className="mt-5">
         <button
           type="button"
-          onClick={() => onContinue(selected)}
+          onClick={() => onContinue(selectedRef.current)}
           disabled={!selected}
           data-testid="button-gateway-continue"
           style={{ backgroundColor: "var(--brand-teal)" }}
