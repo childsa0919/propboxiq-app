@@ -1,21 +1,33 @@
-// Hold result page (/hold/result). Reads the full wizard state from the URL
-// search params, runs the deterministic Hold engine, and renders the dual
-// Long/Short scores, divergence callout, secondary metrics, and the monthly
-// outflow breakdown. Sticky footer: Edit inputs (→ wizard step 2) / Save deal
-// (localStorage + toast). Crossover Year + Comp Percentile cards are deferred
-// to PR-C — their slots are marked with TODO hooks below.
+// Hold result page (/hold/result) — v2 / Mock 3A. Orchestrates the animated
+// dual score reveal (gold pill on the winning strategy), the divergence banner,
+// a KPI strip, and four projection sections: 10-year cash flow & equity,
+// operating-expense breakdown, rent percentile & market trend, and BRRRR
+// feasibility. The locked Hold engine (holdCalc.ts) supplies all scoring math;
+// holdProjections.ts adds the forward-looking pro-forma. Sticky footer keeps the
+// existing Edit inputs / Save deal actions.
 
 import { useMemo } from "react";
 import { useLocation, useSearch } from "wouter";
-import { motion } from "framer-motion";
 import { Pencil, Bookmark } from "lucide-react";
 import { fmtUSD, fmtPct } from "@/lib/calc";
 import {
   calculateHold,
   divergenceCallout,
-  crossoverYear,
   compPercentile,
+  interpolateCurve,
+  CASHFLOW_ANCHORS,
+  COC_ANCHORS,
+  DSCR_ANCHORS,
+  EQUITY_ANCHORS,
 } from "@/lib/holdCalc";
+import {
+  projectCashFlow,
+  projectEquity,
+  cashFlowBreakevenYear,
+  approxIrrPct,
+  opexBreakdown,
+  computeBrrrr,
+} from "@/lib/holdProjections";
 import {
   decodeHoldState,
   encodeHoldState,
@@ -26,10 +38,34 @@ import {
 } from "@/lib/holdState";
 import { useToast } from "@/hooks/use-toast";
 import { SAVED_HOLDS_KEY } from "@/lib/savedHolds";
-import { cn } from "@/lib/utils";
+import ScoreCard, { type VerdictTone, type WeightFactor } from "@/components/holdResult/ScoreCard";
+import DivergenceBanner from "@/components/holdResult/DivergenceBanner";
+import KpiStrip, { type KpiItem } from "@/components/holdResult/KpiStrip";
+import CashFlowChart from "@/components/holdResult/CashFlowChart";
+import EquityChart from "@/components/holdResult/EquityChart";
+import OpExBreakdown from "@/components/holdResult/OpExBreakdown";
+import RentPercentile from "@/components/holdResult/RentPercentile";
+import MarketTrendChart from "@/components/holdResult/MarketTrendChart";
+import BrrrrFeasibility from "@/components/holdResult/BrrrrFeasibility";
 
-function fmtMoney0(n: number): string {
-  return fmtUSD(Math.round(n));
+const clamp01 = (n: number) => Math.max(0, Math.min(100, n));
+
+/** Verdict label for a strategy given its score and cash-flow sign. */
+function verdictFor(
+  kind: "long" | "short",
+  score: number,
+  cashFlowPositive: boolean,
+): { label: string; tone: VerdictTone } {
+  if (kind === "short") {
+    if (!cashFlowPositive) return { label: "BLEEDING", tone: "bad" };
+    if (score >= 75) return { label: "CASH COW", tone: "gold" };
+    if (score >= 50) return { label: "STEADY", tone: "default" };
+    return { label: "THIN", tone: "warn" };
+  }
+  if (score >= 75) return { label: "SLOW BURN", tone: "gold" };
+  if (score >= 50) return { label: "BUILDER", tone: "default" };
+  if (score >= 30) return { label: "WEAK HOLD", tone: "warn" };
+  return { label: "PASS", tone: "bad" };
 }
 
 export default function HoldResult() {
@@ -40,39 +76,100 @@ export default function HoldResult() {
   const state = useMemo(() => decodeHoldState(search), [search]);
   const inputs = useMemo(() => toHoldInputs(state), [state]);
   const r = useMemo(() => calculateHold(inputs), [inputs]);
+
+  const cashFlow = useMemo(() => projectCashFlow(inputs, 10), [inputs]);
+  const equity = useMemo(() => projectEquity(inputs, 10), [inputs]);
+  const breakeven = useMemo(() => cashFlowBreakevenYear(cashFlow), [cashFlow]);
+  const opex = useMemo(() => opexBreakdown(r), [r]);
+  const brrrr = useMemo(() => computeBrrrr(inputs), [inputs]);
+
+  const cashFlowPositive = r.monthlyCashFlow >= 0;
+  const spread = Math.abs(r.longScore - r.shortScore);
+  const tie = spread < 10;
+  const longWins = r.longScore >= r.shortScore;
+
   const callout = useMemo(
     () => divergenceCallout(r.longScore, r.shortScore),
     [r.longScore, r.shortScore],
   );
 
-  const cashFlowPositive = r.monthlyCashFlow >= 0;
+  // Banner: prefer the engine flavor; fall back to the versatile/tie message.
+  const banner = useMemo(() => {
+    if (callout) {
+      return {
+        icon: callout.icon,
+        title:
+          callout.kind === "slow-burn"
+            ? "SLOW BURN — Long-term hold pays off"
+            : callout.headline,
+        detail: callout.detail,
+        tone: callout.tone as "gold" | "red",
+      };
+    }
+    if (tie) {
+      return {
+        icon: "⇄",
+        title: "VERSATILE DEAL — works either way",
+        detail: `Long-term and short-term scores are within ${spread} pts. This deal holds up whether you optimize for cash flow now or equity later.`,
+        tone: "teal" as const,
+      };
+    }
+    return null;
+  }, [callout, tie, spread]);
 
-  // Crossover Year — only meaningful when cash flow is positive and equity
-  // actually overtakes it within 10 years.
-  const crossover = useMemo(
-    () =>
-      crossoverYear(
-        r.monthlyCashFlow,
-        r.loanAmount,
-        inputs.ratePct,
-        inputs.termYears,
-      ),
-    [r.monthlyCashFlow, r.loanAmount, inputs.ratePct, inputs.termYears],
-  );
-  const showCrossover =
-    r.monthlyCashFlow > 0 && crossover.crossover !== null;
+  // Weight factors per strategy (top-3), fills derived from the same curves the
+  // engine uses so the bars track the real component scores.
+  const longFactors: WeightFactor[] = [
+    { label: "DSCR", fill: clamp01(r.dscr < 1 ? r.dscr * 40 : interpolateCurve(r.dscr, DSCR_ANCHORS)), weightPct: 25 },
+    { label: "CoC", fill: clamp01(r.cashOnCashPct < 0 ? 0 : interpolateCurve(r.cashOnCashPct, COC_ANCHORS)), weightPct: 25 },
+    { label: "Equity", fill: clamp01(interpolateCurve(r.equityBuildPct, EQUITY_ANCHORS)), weightPct: 15 },
+  ];
+  const shortFactors: WeightFactor[] = [
+    { label: "CF/mo", fill: clamp01(interpolateCurve(r.monthlyCashFlow, CASHFLOW_ANCHORS)), weightPct: 50 },
+    { label: "CoC", fill: clamp01(r.cashOnCashPct < 0 ? 0 : interpolateCurve(r.cashOnCashPct, COC_ANCHORS)), weightPct: 20 },
+    { label: "DSCR", fill: clamp01(r.dscr < 1 ? r.dscr * 40 : interpolateCurve(r.dscr, DSCR_ANCHORS)), weightPct: 10 },
+  ];
 
-  // Comp Percentile — rank against the RentCast rent band for this ZIP. Hidden
-  // entirely when we have no ZIP or no comp band to work with.
+  const longVerdict = verdictFor("long", r.longScore, cashFlowPositive);
+  const shortVerdict = verdictFor("short", r.shortScore, cashFlowPositive);
+
+  // Year 5 / Year 10 return + approx IRR for the KPI strip under the charts.
+  const y5 = equity[4]?.total ?? 0;
+  const y10 = equity[9]?.total ?? 0;
+  const irr5 = approxIrrPct(y5, r.cashInvested, 5);
+  const irr10 = approxIrrPct(y10, r.cashInvested, 10);
+
+  const kpis: KpiItem[] = [
+    {
+      label: "CASH FLOW",
+      value: `${cashFlowPositive ? "" : "−"}${fmtUSD(Math.abs(Math.round(r.monthlyCashFlow)))}`,
+      sub: "/mo Yr 1",
+      tone: cashFlowPositive ? "default" : "bad",
+      subTone: cashFlowPositive ? "default" : "bad",
+    },
+    {
+      label: "CROSSOVER",
+      value: breakeven != null ? `Yr ${breakeven}` : "—",
+      sub: breakeven != null ? "CF turns +" : "stays −",
+      tone: "default",
+    },
+    {
+      label: "10-YR IRR",
+      value: fmtPct(irr10),
+      sub: `Yr5 ${fmtPct(irr5)}`,
+      tone: irr10 >= 8 ? "good" : irr10 >= 0 ? "default" : "bad",
+    },
+  ];
+
+  // Rent percentile vs synthesized comp band (same source as v1).
   const compRents = useMemo(() => synthCompRents(state), [state]);
   const percentile = useMemo(
     () => compPercentile(r.monthlyCashFlow, compRents, r.piti),
     [r.monthlyCashFlow, compRents, r.piti],
   );
-  const showPercentile = !!state.zip && compRents.length > 0;
+  const showRent = !!state.zip && compRents.length > 0 && !percentile.limited;
 
   function handleEdit() {
-    // Round-trip back to the address step (wizard STEP 2 of 7) with state.
     navigate(`/hold?step=1&${encodeHoldState(state)}`);
   }
 
@@ -106,195 +203,126 @@ export default function HoldResult() {
 
   return (
     <div
-      className="wizard-canvas mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-10"
+      className="wizard-canvas mx-auto max-w-md px-4 py-6 sm:py-8"
       style={{ paddingBottom: "calc(9rem + env(safe-area-inset-bottom, 0px))" }}
     >
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-      >
-        <div className="mono-eyebrow mb-1.5 text-[10px] tracking-[0.16em] text-muted-foreground">
-          RESULT
+      {/* Header */}
+      <div className="mb-3.5 px-1">
+        <div className="mb-1.5 text-[9px] font-bold tracking-[0.18em] text-muted-foreground">
+          HOLD RESULT
         </div>
         <h1
-          className="mb-5 font-display text-[18px] font-bold leading-[1.3] tracking-[-0.01em] text-foreground"
+          className="font-display text-[17px] font-extrabold leading-[1.25] tracking-[-0.02em] text-foreground"
           data-testid="text-result-address"
         >
           {state.address || "Your hold deal"}
         </h1>
+      </div>
 
-        {/* HERO — monthly cash flow */}
+      {/* Divergence banner */}
+      {banner && (
+        <DivergenceBanner icon={banner.icon} title={banner.title} detail={banner.detail} tone={banner.tone} />
+      )}
+
+      {/* Hero score pair */}
+      <div className="relative mb-1 grid grid-cols-2 gap-2">
+        <ScoreCard
+          kind="long"
+          label="LONG-TERM"
+          subtitle="5–10 YR HOLD"
+          score={r.longScore}
+          verdict={longVerdict.label}
+          verdictTone={longVerdict.tone}
+          factors={longFactors}
+          winner={!tie && longWins}
+          delayMs={0}
+        />
+        <ScoreCard
+          kind="short"
+          label="SHORT-TERM"
+          subtitle="CASH-FLOW FIRST"
+          score={r.shortScore}
+          verdict={shortVerdict.label}
+          verdictTone={shortVerdict.tone}
+          factors={shortFactors}
+          winner={!tie && !longWins}
+          delayMs={200}
+        />
+      </div>
+
+      {/* Divergence bridge pill */}
+      <div className="mb-3 flex items-center justify-center" style={{ height: 36 }}>
         <div
-          className="mb-3 rounded-2xl border p-[18px]"
+          className="flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[10px] font-extrabold tracking-[0.05em] backdrop-blur-md"
           style={{
-            background:
-              "linear-gradient(135deg, rgba(18,109,133,0.18) 0%, rgba(18,109,133,0.06) 100%)",
-            borderColor: "rgba(95,212,231,0.2)",
+            background: "linear-gradient(90deg, rgba(18,109,133,0.5), rgba(95,212,231,0.25), rgba(18,109,133,0.5))",
+            borderColor: "rgba(95,212,231,0.35)",
+            color: "#7be3f0",
           }}
-          data-testid="card-hero-cashflow"
+          data-testid="pill-divergence-bridge"
         >
-          <div className="text-[10px] font-bold tracking-[0.14em] text-accent">
-            MONTHLY CASH FLOW
-          </div>
-          <div className="mt-0.5 flex items-baseline gap-1">
-            <span
-              className={cn(
-                "font-display text-[38px] font-black leading-none tracking-[-0.025em]",
-                cashFlowPositive ? "text-foreground" : "text-[#f87171]",
-              )}
-              data-testid="text-cashflow"
-            >
-              {cashFlowPositive ? "" : "−"}
-              {fmtMoney0(Math.abs(r.monthlyCashFlow))}
-            </span>
-            <span className="text-[16px] font-bold text-muted-foreground">
-              /mo
-            </span>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-white/75">
-            <div>
-              Rent <b className="font-bold text-white">{fmtMoney0(inputs.monthlyRent)}</b>
-            </div>
-            <div>
-              PITI <b className="font-bold text-white">{fmtMoney0(r.piti)}</b>
-            </div>
-            <div>
-              Reserves{" "}
-              <b className="font-bold text-white">{fmtMoney0(r.reservesTotal)}</b>
-            </div>
-          </div>
+          <span>{spread} pt gap</span>
+          {tie
+            ? " — versatile, works either way"
+            : longWins
+              ? " — Long-term is the play"
+              : " — Short-term is the play"}
         </div>
+      </div>
 
-        {/* Dual scores */}
-        <div className="mb-3 grid grid-cols-2 gap-2.5">
-          <ScoreCard
-            kind="long"
-            label="LONG-TERM"
-            name="5–10yr hold"
-            score={r.longScore}
-          />
-          <ScoreCard
-            kind="short"
-            label="SHORT-TERM"
-            name="cash-flow first"
-            score={r.shortScore}
-          />
-        </div>
+      {/* KPI strip */}
+      <KpiStrip items={kpis} />
 
-        {/* Divergence callout */}
-        {callout && (
-          <div
-            className="mb-3 flex items-start gap-3 rounded-2xl border p-3.5"
-            style={
-              callout.tone === "gold"
-                ? {
-                    background:
-                      "linear-gradient(135deg, rgba(251,191,36,0.08), rgba(251,191,36,0.02))",
-                    borderColor: "rgba(251,191,36,0.35)",
-                  }
-                : {
-                    background:
-                      "linear-gradient(135deg, rgba(248,113,113,0.08), rgba(248,113,113,0.02))",
-                    borderColor: "rgba(248,113,113,0.35)",
-                  }
-            }
-            data-testid="callout-divergence"
-          >
-            <div
-              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-[16px] font-black"
-              style={
-                callout.tone === "gold"
-                  ? { background: "rgba(251,191,36,0.18)", color: "#fbbf24" }
-                  : { background: "rgba(248,113,113,0.18)", color: "#f87171" }
-              }
-            >
-              {callout.icon}
-            </div>
-            <div className="text-[12px] leading-[1.45]">
-              <b className="mb-0.5 block text-[13px] font-extrabold tracking-[-0.005em] text-foreground">
-                {callout.headline}
-              </b>
-              <span className="text-muted-foreground">{callout.detail}</span>
-            </div>
+      {/* 10-year cash flow & equity */}
+      <SectionHead title="10-Year Cash Flow & Equity" />
+      <div className="grid grid-cols-2 gap-2 max-[520px]:grid-cols-1">
+        <ChartCard title="Monthly Cash Flow">
+          <CashFlowChart cashFlow={cashFlow} crossoverYear={breakeven} />
+        </ChartCard>
+        <ChartCard title="Equity Build">
+          <EquityChart equity={equity} />
+        </ChartCard>
+      </div>
+      <div
+        className="mt-2.5 grid grid-cols-2 gap-2 rounded-[14px] border p-[12px_14px] backdrop-blur-md"
+        style={{ background: "rgba(255,255,255,0.10)", borderColor: "rgba(255,255,255,0.07)" }}
+        data-testid="strip-return-irr"
+      >
+        <ReturnRow year="YEAR 5" ret={y5} irr={irr5} />
+        <ReturnRow year="YEAR 10" ret={y10} irr={irr10} />
+      </div>
+
+      {/* Operating expense breakdown */}
+      <SectionHead title="Operating Expense Breakdown" />
+      <OpExBreakdown total={opex.total} slices={opex.slices} />
+
+      {/* Rent percentile & market trend */}
+      {showRent && (
+        <>
+          <SectionHead title="Rent Percentile & Market Trend" />
+          <div className="grid grid-cols-2 gap-2 max-[520px]:grid-cols-1">
+            <RentPercentile
+              rent={inputs.monthlyRent}
+              percentile={percentile.percentile}
+              compCount={percentile.compCount}
+              radiusMiles={0.5}
+            />
+            <MarketTrendChart medianRent={inputs.monthlyRent} zip={state.zip ?? ""} />
           </div>
-        )}
+        </>
+      )}
 
-        {/* Crossover Year — 10-year return buildup */}
-        {showCrossover && (
-          <CrossoverCard
-            cashFlow10yr={crossover.cashFlow10yr}
-            equityBuild10yr={crossover.equityBuild10yr}
-            totalReturn10yr={crossover.totalReturn10yr}
-            crossover={crossover.crossover as number}
-          />
-        )}
+      {/* BRRRR feasibility */}
+      <SectionHead title="BRRRR Feasibility" />
+      <BrrrrFeasibility b={brrrr} />
 
-        {/* Comp Percentile — rank vs RentCast comps in the same ZIP */}
-        {showPercentile && (
-          <PercentileCard
-            zip={state.zip as string}
-            percentile={percentile.percentile}
-            compCount={percentile.compCount}
-            limited={percentile.limited}
-          />
-        )}
-
-        {/* Secondary metrics */}
-        <div className="mb-3 grid grid-cols-3 gap-2">
-          <Metric label="CASH-ON-CASH" value={fmtPct(r.cashOnCashPct)} negative={r.cashOnCashPct < 0} />
-          <Metric label="CAP RATE" value={fmtPct(r.capRatePct)} negative={r.capRatePct < 0} />
-          <Metric label="DSCR" value={r.dscr.toFixed(2)} negative={r.dscr < 1} />
-        </div>
-
-        {/* Monthly outflow */}
-        <div className="mb-2 mt-4 text-[10px] font-bold tracking-[0.14em] text-muted-foreground">
-          MONTHLY OUTFLOW
-        </div>
-        <div
-          className="mb-2 overflow-hidden rounded-2xl border"
-          style={{ borderColor: "rgba(255,255,255,0.08)", background: "#1c242d" }}
-          data-testid="table-outflow"
-        >
-          <OutflowRow label="Principal & interest" value={-r.monthlyPI} />
-          <OutflowRow label="Property tax" value={-r.monthlyTax} />
-          <OutflowRow label="Insurance" value={-r.monthlyInsurance} />
-          <OutflowRow
-            label={`Maintenance reserve (${state.maintenancePct}%)`}
-            value={-r.maintenance}
-          />
-          <OutflowRow label={`CapEx reserve (${state.capexPct}%)`} value={-r.capex} />
-          <OutflowRow label={`Vacancy (${state.vacancyPct}%)`} value={-r.vacancy} />
-          <OutflowRow
-            label={`Management (${state.managementPct}%)`}
-            value={-r.management}
-          />
-          <div
-            className="flex items-center justify-between px-3.5 py-3 text-[12px]"
-            style={{ background: "#232c37" }}
-          >
-            <div className="font-extrabold text-foreground">Net cash flow</div>
-            <div
-              className={cn(
-                "font-extrabold tabular-nums",
-                cashFlowPositive ? "text-[#4ade80]" : "text-[#f87171]",
-              )}
-              data-testid="text-net-cashflow"
-            >
-              {cashFlowPositive ? "+" : "−"}
-              {fmtMoney0(Math.abs(r.monthlyCashFlow))}
-            </div>
-          </div>
-        </div>
-
-        <p className="px-1 text-[11px] leading-[1.5] text-muted-foreground/70">
-          Tax {state.annualPropertyTax != null ? "from records" : "estimated"} ·
-          insurance estimated at{" "}
-          {fmtMoney0(estimatedAnnualInsurance(inputs.purchasePrice))}/yr.{" "}
-          {state.annualPropertyTax == null &&
-            `Tax ≈ ${fmtMoney0(estimatePropertyTax(inputs.purchasePrice))}/yr.`}
-        </p>
-      </motion.div>
+      <p className="mt-4 px-1 text-[10px] leading-[1.5] text-muted-foreground/70">
+        Tax {state.annualPropertyTax != null ? "from records" : "estimated"} ·
+        insurance estimated at {fmtUSD(Math.round(estimatedAnnualInsurance(inputs.purchasePrice)))}/yr.{" "}
+        {state.annualPropertyTax == null &&
+          `Tax ≈ ${fmtUSD(Math.round(estimatePropertyTax(inputs.purchasePrice)))}/yr.`}{" "}
+        Projections assume 3% rent / expense / appreciation growth.
+      </p>
 
       {/* Sticky footer CTAs */}
       <div
@@ -305,16 +333,13 @@ export default function HoldResult() {
           paddingBottom: "env(safe-area-inset-bottom, 0px)",
         }}
       >
-        <div className="mx-auto flex max-w-2xl gap-2.5 px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-md gap-2.5 px-4 py-3">
           <button
             type="button"
             onClick={handleEdit}
             data-testid="button-edit-inputs"
             className="flex h-[52px] flex-1 items-center justify-center gap-2 rounded-[14px] border text-[14px] font-extrabold text-foreground transition-all duration-200 hover:brightness-110 active:scale-[0.99]"
-            style={{
-              borderColor: "rgba(255,255,255,0.14)",
-              background: "#1c242d",
-            }}
+            style={{ borderColor: "rgba(255,255,255,0.14)", background: "#1c242d" }}
           >
             <Pencil className="h-[16px] w-[16px]" strokeWidth={2.4} />
             Edit inputs
@@ -335,340 +360,44 @@ export default function HoldResult() {
   );
 }
 
-function fmtCompact(n: number): string {
+function SectionHead({ title }: { title: string }) {
+  return (
+    <div className="flex items-center gap-2 px-1 pb-2.5 pt-5">
+      <h2 className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+        {title}
+      </h2>
+      <div className="h-px flex-1" style={{ background: "rgba(255,255,255,0.07)" }} />
+    </div>
+  );
+}
+
+function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div
+      className="rounded-2xl border p-[14px_12px] backdrop-blur-md"
+      style={{ background: "rgba(255,255,255,0.10)", borderColor: "rgba(255,255,255,0.07)" }}
+    >
+      <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function compactK(n: number): string {
   const v = Math.round(n);
   if (Math.abs(v) >= 1000) return `$${Math.round(v / 1000)}k`;
   return `$${v}`;
 }
 
-export function CrossoverCard({
-  cashFlow10yr,
-  equityBuild10yr,
-  totalReturn10yr,
-  crossover,
-}: {
-  cashFlow10yr: number;
-  equityBuild10yr: number;
-  totalReturn10yr: number;
-  crossover: number;
-}) {
-  const longest = Math.max(cashFlow10yr, equityBuild10yr, totalReturn10yr, 1);
-  const bars = [
-    {
-      key: "cash",
-      label: "Cash flow",
-      value: cashFlow10yr,
-      fill: "linear-gradient(90deg, #126D85, #5fd4e7)",
-      ink: "#0a0e12",
-    },
-    {
-      key: "equity",
-      label: "Equity build",
-      value: equityBuild10yr,
-      fill: "linear-gradient(90deg, #7be3f0, #b8eef5)",
-      ink: "#0a0e12",
-    },
-    {
-      key: "total",
-      label: "Total return",
-      value: totalReturn10yr,
-      fill: "linear-gradient(90deg, #ffffff, #d0f4f8)",
-      ink: "#0a0e12",
-    },
-  ];
-
+function ReturnRow({ year, ret, irr }: { year: string; ret: number; irr: number }) {
   return (
-    <div
-      className="mb-3 rounded-2xl border p-3.5"
-      style={{ borderColor: "rgba(255,255,255,0.08)", background: "#1c242d" }}
-      data-testid="card-crossover"
-    >
-      <div className="mb-2.5 flex items-baseline justify-between">
-        <div className="text-[10px] font-bold tracking-[0.14em] text-muted-foreground">
-          10-YEAR RETURN BUILDUP
-        </div>
-        <div
-          className="rounded-full px-2.5 py-1 text-[10px] font-extrabold tracking-[0.04em]"
-          style={{ background: "rgba(251,191,36,0.16)", color: "#fbbf24" }}
-          data-testid="badge-crossover-year"
-        >
-          CROSSOVER · YR {crossover}
-        </div>
-      </div>
-
-      <div className="mb-3 flex flex-col gap-1.5">
-        {bars.map((b) => (
-          <div key={b.key} className="flex items-center gap-2.5 text-[11px]">
-            <div className="w-[78px] shrink-0 font-bold text-muted-foreground">
-              {b.label}
-            </div>
-            <div
-              className="relative h-[18px] flex-1 overflow-hidden rounded-md"
-              style={{ background: "#232c37" }}
-            >
-              <motion.div
-                className="flex h-full items-center rounded-md px-2 text-[10px] font-extrabold whitespace-nowrap"
-                style={{ background: b.fill, color: b.ink }}
-                initial={{ width: 0 }}
-                animate={{
-                  width: `${Math.max(12, (b.value / longest) * 100)}%`,
-                }}
-                transition={{ duration: 0.6, ease: "easeOut" }}
-                data-testid={`crossover-bar-${b.key}`}
-              >
-                {fmtCompact(b.value)}
-              </motion.div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div
-        className="border-t pt-2.5 text-[11px] leading-[1.55] text-muted-foreground"
-        style={{ borderColor: "rgba(255,255,255,0.08)" }}
-      >
-        <span
-          className="mr-1.5 inline-block rounded-full px-2 py-0.5 text-[10px] font-extrabold tracking-[0.04em]"
-          style={{ background: "rgba(95,212,231,0.12)", color: "#5fd4e7" }}
-        >
-          Cash flow
-        </span>
-        leads early but{" "}
-        <span
-          className="mx-1.5 inline-block rounded-full px-2 py-0.5 text-[10px] font-extrabold tracking-[0.04em]"
-          style={{ background: "rgba(123,227,240,0.14)", color: "#7be3f0" }}
-        >
-          Equity build
-        </span>
-        takes over by year {crossover}.
-      </div>
-    </div>
-  );
-}
-
-export function PercentileCard({
-  zip,
-  percentile,
-  compCount,
-  limited,
-}: {
-  zip: string;
-  percentile: number;
-  compCount: number;
-  limited: boolean;
-}) {
-  // Tint + marker color follow the percentile band.
-  const band: "high" | "mid" | "low" =
-    percentile >= 60 ? "high" : percentile >= 40 ? "mid" : "low";
-  const tint = {
-    high: {
-      bg: "rgba(74,222,128,0.08)",
-      border: "rgba(74,222,128,0.25)",
-      marker: "#4ade80",
-      num: "#4ade80",
-    },
-    mid: {
-      bg: "rgba(95,212,231,0.06)",
-      border: "rgba(95,212,231,0.22)",
-      marker: "#5fd4e7",
-      num: "#5fd4e7",
-    },
-    low: {
-      bg: "rgba(239,68,68,0.08)",
-      border: "rgba(239,68,68,0.25)",
-      marker: "#f87171",
-      num: "#f87171",
-    },
-  }[band];
-
-  const ordinalSuffix = (n: number): string => {
-    const s = ["th", "st", "nd", "rd"];
-    const v = n % 100;
-    return s[(v - 20) % 10] || s[v] || s[0];
-  };
-
-  return (
-    <div
-      className="mb-3 rounded-2xl border p-3.5"
-      style={{ background: tint.bg, borderColor: tint.border }}
-      data-testid="card-percentile"
-    >
-      {limited ? (
-        <>
-          <div className="mb-1 text-[10px] font-bold tracking-[0.14em] text-muted-foreground">
-            COMP PERCENTILE
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span
-              className="font-display text-[20px] font-black leading-none tracking-[-0.01em] text-foreground"
-              data-testid="text-percentile-limited"
-            >
-              Limited comps
-            </span>
-          </div>
-          <p className="mt-2 text-[11px] leading-[1.5] text-muted-foreground">
-            Only {compCount} comparable {compCount === 1 ? "rental" : "rentals"}{" "}
-            in {zip}. Need at least 5 to rank this deal.
-          </p>
-        </>
-      ) : (
-        <>
-          <div className="flex items-center gap-4">
-            <div className="shrink-0">
-              <span
-                className="font-display text-[34px] font-black leading-none tracking-[-0.02em]"
-                style={{ color: tint.num }}
-                data-testid="text-percentile"
-              >
-                {percentile}
-                <span className="ml-1 text-[14px] font-bold text-muted-foreground">
-                  {ordinalSuffix(percentile)} %ile
-                </span>
-              </span>
-              <div className="mt-1 text-[11px] text-muted-foreground">
-                vs {zip} ZIP comps
-              </div>
-            </div>
-
-            <div className="relative flex-1">
-              <div
-                className="relative h-2 w-full rounded-full"
-                style={{ background: "#232c37" }}
-              >
-                <motion.div
-                  className="absolute left-0 top-0 h-full rounded-full"
-                  style={{
-                    background: "linear-gradient(90deg, #126D85, #5fd4e7)",
-                  }}
-                  initial={{ width: 0 }}
-                  animate={{ width: `${Math.max(0, Math.min(100, percentile))}%` }}
-                  transition={{ duration: 0.6, ease: "easeOut" }}
-                />
-                <motion.div
-                  className="absolute h-3.5 w-3.5 rounded-full"
-                  style={{
-                    top: "-3px",
-                    background: tint.marker,
-                    border: "3px solid #141a21",
-                    transform: "translateX(-50%)",
-                  }}
-                  initial={{ left: 0 }}
-                  animate={{ left: `${Math.max(0, Math.min(100, percentile))}%` }}
-                  transition={{ duration: 0.6, ease: "easeOut" }}
-                  data-testid="percentile-marker"
-                />
-              </div>
-              <div className="mt-1.5 flex justify-between text-[10px] font-bold text-muted-foreground">
-                <span>Weak</span>
-                <span>Median</span>
-                <span>Top</span>
-              </div>
-            </div>
-          </div>
-          <p className="mt-2.5 text-[11px] leading-[1.5] text-muted-foreground">
-            This deal cash-flows better than{" "}
-            <b className="font-bold text-foreground">{percentile}%</b> of{" "}
-            {compCount} comparable rentals in {zip}.
-          </p>
-        </>
-      )}
-    </div>
-  );
-}
-
-function ScoreCard({
-  kind,
-  label,
-  name,
-  score,
-}: {
-  kind: "long" | "short";
-  label: string;
-  name: string;
-  score: number;
-}) {
-  const fill =
-    kind === "long"
-      ? "linear-gradient(90deg, #126D85, #5fd4e7)"
-      : "linear-gradient(90deg, #5fd4e7, #7be3f0)";
-  return (
-    <div
-      className="rounded-2xl border p-3.5"
-      style={{ borderColor: "rgba(255,255,255,0.08)", background: "#1c242d" }}
-      data-testid={`card-score-${kind}`}
-    >
-      <div className="mb-1 text-[9px] font-bold tracking-[0.14em] text-muted-foreground">
-        {label}
-      </div>
-      <div className="mb-2 text-[12px] font-bold text-muted-foreground">
-        {name}
-      </div>
-      <div className="flex items-baseline gap-1.5">
-        <span
-          className={cn(
-            "font-display text-[30px] font-black leading-none tracking-[-0.02em]",
-            kind === "short" ? "text-accent" : "text-foreground",
-          )}
-          data-testid={`text-score-${kind}`}
-        >
-          {score}
-        </span>
-        <span className="text-[11px] font-bold text-muted-foreground">/100</span>
-      </div>
-      <div
-        className="mt-2.5 h-1 overflow-hidden rounded-full"
-        style={{ background: "#232c37" }}
-      >
-        <motion.i
-          className="block h-full rounded-full"
-          style={{ background: fill }}
-          initial={{ width: 0 }}
-          animate={{ width: `${Math.max(0, Math.min(100, score))}%` }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function Metric({
-  label,
-  value,
-  negative = false,
-}: {
-  label: string;
-  value: string;
-  negative?: boolean;
-}) {
-  return (
-    <div
-      className="rounded-xl border px-2.5 py-3"
-      style={{ borderColor: "rgba(255,255,255,0.08)", background: "#1c242d" }}
-    >
-      <div className="mb-1 text-[9px] font-bold tracking-[0.12em] text-muted-foreground">
-        {label}
-      </div>
-      <div
-        className={cn(
-          "font-display text-[16px] font-black leading-none tracking-[-0.01em]",
-          negative ? "text-[#f87171]" : "text-[#5fd4e7]",
-        )}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function OutflowRow({ label, value }: { label: string; value: number }) {
-  return (
-    <div
-      className="flex items-center justify-between border-b px-3.5 py-2.5 text-[12px]"
-      style={{ borderColor: "rgba(255,255,255,0.08)" }}
-    >
-      <div className="text-muted-foreground">{label}</div>
-      <div className="font-bold tabular-nums text-[#f87171]">
-        −{fmtMoney0(Math.abs(value))}
+    <div className="flex flex-col gap-0.5">
+      <div className="text-[9px] font-bold tracking-[0.12em] text-muted-foreground">{year}</div>
+      <div className="text-[12px] font-bold tabular-nums text-foreground">
+        Return <span className="font-extrabold text-[#5fd4e7]">{compactK(ret)}</span> · IRR{" "}
+        <span className="font-extrabold text-[#5fd4e7]">{fmtPct(irr)}</span>
       </div>
     </div>
   );
