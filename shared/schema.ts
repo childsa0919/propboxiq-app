@@ -9,6 +9,15 @@ export const users = sqliteTable("users", {
   name: text("name"),
   createdAt: integer("created_at").notNull(),
   lastLoginAt: integer("last_login_at"),
+  // Welcome-drip campaign state. Each *_sent_at column is the epoch-ms marker
+  // that gates idempotent sends; unsubscribedAt gates all future sends.
+  welcomeEmailSentAt: integer("welcome_email_sent_at"),
+  dripDay2SentAt: integer("drip_day2_sent_at"),
+  dripDay5SentAt: integer("drip_day5_sent_at"),
+  unsubscribedAt: integer("unsubscribed_at"),
+  // Opaque random token used in the /unsubscribe?token= URL. Generated at
+  // user creation so every welcome email can carry a working unsubscribe link.
+  unsubscribeToken: text("unsubscribe_token"),
 });
 
 export type User = typeof users.$inferSelect;
