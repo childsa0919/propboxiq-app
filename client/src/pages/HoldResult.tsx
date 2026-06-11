@@ -6,7 +6,7 @@
 // holdProjections.ts adds the forward-looking pro-forma. Sticky footer keeps the
 // existing Edit inputs / Save deal actions.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { Pencil, Bookmark } from "lucide-react";
 import { fmtUSD, fmtPct } from "@/lib/calc";
@@ -26,7 +26,9 @@ import {
   cashFlowBreakevenYear,
   approxIrrPct,
   opexBreakdown,
+  applyOpExOverrides,
   computeBrrrr,
+  type OpExOverrideMap,
 } from "@/lib/holdProjections";
 import {
   decodeHoldState,
@@ -38,6 +40,8 @@ import {
 } from "@/lib/holdState";
 import { useToast } from "@/hooks/use-toast";
 import { SAVED_HOLDS_KEY } from "@/lib/savedHolds";
+import { useSaleComps } from "@/lib/useSaleComps";
+import { useRentMarket } from "@/lib/useRentMarket";
 import ScoreCard, { type VerdictTone, type WeightFactor } from "@/components/holdResult/ScoreCard";
 import DivergenceBanner from "@/components/holdResult/DivergenceBanner";
 import KpiStrip, { type KpiItem } from "@/components/holdResult/KpiStrip";
@@ -74,14 +78,37 @@ export default function HoldResult() {
   const { toast } = useToast();
 
   const state = useMemo(() => decodeHoldState(search), [search]);
-  const inputs = useMemo(() => toHoldInputs(state), [state]);
+  const baseInputs = useMemo(() => toHoldInputs(state), [state]);
+  // Base (unedited) results — the denominator for OpEx shares + the reset target.
+  const baseR = useMemo(() => calculateHold(baseInputs), [baseInputs]);
+
+  // User edits to the operating-cost mix. Editing re-derives the engine inputs
+  // (applyOpExOverrides) which re-scores the whole deal below.
+  const [opExOverrides, setOpExOverrides] = useState<OpExOverrideMap>({});
+
+  const inputs = useMemo(
+    () => applyOpExOverrides(baseInputs, baseR, opExOverrides),
+    [baseInputs, baseR, opExOverrides],
+  );
   const r = useMemo(() => calculateHold(inputs), [inputs]);
 
   const cashFlow = useMemo(() => projectCashFlow(inputs, 10), [inputs]);
   const equity = useMemo(() => projectEquity(inputs, 10), [inputs]);
   const breakeven = useMemo(() => cashFlowBreakevenYear(cashFlow), [cashFlow]);
   const opex = useMemo(() => opexBreakdown(r), [r]);
-  const brrrr = useMemo(() => computeBrrrr(inputs), [inputs]);
+  const baseOpex = useMemo(() => opexBreakdown(baseR), [baseR]);
+
+  // Sale comps feed the BRRRR ARV (median $/sqft × subject sqft). Falls back to
+  // a flat +10% uplift inside computeBrrrr when <3 comps or no subject sqft.
+  const saleComps = useSaleComps(state.address || null);
+  const brrrr = useMemo(
+    () =>
+      computeBrrrr(inputs, {
+        comps: saleComps.data?.comps,
+        subjectSqft: saleComps.data?.subject.sqft ?? null,
+      }),
+    [inputs, saleComps.data],
+  );
 
   const cashFlowPositive = r.monthlyCashFlow >= 0;
   const spread = Math.abs(r.longScore - r.shortScore);
@@ -167,7 +194,17 @@ export default function HoldResult() {
     () => compPercentile(r.monthlyCashFlow, compRents, r.piti),
     [r.monthlyCashFlow, compRents, r.piti],
   );
-  const showRent = !!state.zip && compRents.length > 0 && !percentile.limited;
+  const showPercentile = compRents.length > 0 && !percentile.limited;
+
+  // Real 12-month area rent trend from RentCast /markets (single-family).
+  const rentMarket = useRentMarket(state.zip);
+  const trend = rentMarket.data;
+  const trendAvailable = trend?.available === true;
+
+  // The Rent / Market section shows whenever we have a ZIP — the percentile
+  // half renders only when we have a usable comp band, the trend half renders
+  // its own loading / unavailable states.
+  const showRentSection = !!state.zip;
 
   function handleEdit() {
     navigate(`/hold?step=1&${encodeHoldState(state)}`);
@@ -186,6 +223,9 @@ export default function HoldResult() {
         shortScore: r.shortScore,
         monthlyCashFlow: Math.round(r.monthlyCashFlow),
         state,
+        ...(Object.keys(opExOverrides).length > 0
+          ? { opExOverrides }
+          : {}),
       });
       localStorage.setItem(SAVED_HOLDS_KEY, JSON.stringify(list.slice(0, 100)));
       toast({
@@ -227,6 +267,7 @@ export default function HoldResult() {
       {/* Hero score pair */}
       <div className="relative mb-1 grid grid-cols-2 gap-2">
         <ScoreCard
+          key={`long-${r.longScore}`}
           kind="long"
           label="LONG-TERM"
           subtitle="5–10 YR HOLD"
@@ -238,6 +279,7 @@ export default function HoldResult() {
           delayMs={0}
         />
         <ScoreCard
+          key={`short-${r.shortScore}`}
           kind="short"
           label="SHORT-TERM"
           subtitle="CASH-FLOW FIRST"
@@ -294,20 +336,34 @@ export default function HoldResult() {
 
       {/* Operating expense breakdown */}
       <SectionHead title="Operating Expense Breakdown" />
-      <OpExBreakdown total={opex.total} slices={opex.slices} />
+      <OpExBreakdown
+        total={opex.total}
+        slices={opex.slices}
+        baseTotal={baseOpex.total}
+        overrides={opExOverrides}
+        onOverridesChange={setOpExOverrides}
+      />
 
       {/* Rent percentile & market trend */}
-      {showRent && (
+      {showRentSection && (
         <>
           <SectionHead title="Rent Percentile & Market Trend" />
           <div className="grid grid-cols-2 gap-2 max-[520px]:grid-cols-1">
-            <RentPercentile
-              rent={inputs.monthlyRent}
-              percentile={percentile.percentile}
-              compCount={percentile.compCount}
-              radiusMiles={0.5}
+            {showPercentile && (
+              <RentPercentile
+                rent={inputs.monthlyRent}
+                percentile={percentile.percentile}
+                compCount={percentile.compCount}
+                radiusMiles={0.5}
+              />
+            )}
+            <MarketTrendChart
+              zip={state.zip ?? ""}
+              history={trendAvailable ? trend.history : []}
+              yoyChange={trendAvailable ? trend.yoyChange : 0}
+              isLoading={rentMarket.isLoading}
+              available={trendAvailable}
             />
-            <MarketTrendChart medianRent={inputs.monthlyRent} zip={state.zip ?? ""} />
           </div>
         </>
       )}

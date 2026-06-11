@@ -46,6 +46,13 @@ function verdictText(b: BrrrrResult): string {
   }
 }
 
+function arvLine(b: BrrrrResult): string {
+  if (b.arvSource.kind === "comps") {
+    return `ARV ${fmtUSD(b.arv)} · from ${b.arvSource.compCount} comps at ${fmtUSD(b.arvSource.medianPpsf)}/sqft`;
+  }
+  return `ARV ${fmtUSD(b.arv)} · estimated +10%`;
+}
+
 export default function BrrrrFeasibility({ b }: { b: BrrrrResult }) {
   const meta = VERDICT_META[b.verdict];
   const steps = [
@@ -74,6 +81,12 @@ export default function BrrrrFeasibility({ b }: { b: BrrrrResult }) {
           title="Buy, Rehab, Rent, Refinance — capital-recycling analysis"
         >
           i
+        </div>
+        <div
+          className="ml-auto text-right text-[8.5px] font-semibold leading-[1.3] text-muted-foreground"
+          data-testid="text-brrrr-arv"
+        >
+          {arvLine(b)}
         </div>
       </div>
 

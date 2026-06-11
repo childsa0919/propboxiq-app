@@ -10,6 +10,18 @@ import {
 
 export const SAVED_HOLDS_KEY = "propboxiq:savedHolds";
 
+// User edits to the operating-expense mix, as decimal shares of total monthly
+// OpEx (e.g. 0.012 = 1.2%). Only the non-PITI rows are editable. Absent keys
+// fall back to the documented defaults; an absent object means no edits.
+export interface OpExOverrides {
+  propTax?: number;
+  insurance?: number;
+  vacancy?: number;
+  mgmt?: number;
+  maint?: number;
+  capex?: number;
+}
+
 export interface SavedHold {
   dealType: "hold";
   savedAt: string; // ISO timestamp
@@ -19,6 +31,7 @@ export interface SavedHold {
   shortScore: number;
   monthlyCashFlow: number;
   state: HoldWizardState;
+  opExOverrides?: OpExOverrides;
 }
 
 function isSavedHold(v: unknown): v is SavedHold {
@@ -51,6 +64,7 @@ export function readSavedHolds(): SavedHold[] {
       shortScore: h.shortScore,
       monthlyCashFlow: h.monthlyCashFlow,
       state: { ...DEFAULT_HOLD_STATE, ...h.state },
+      ...(h.opExOverrides ? { opExOverrides: h.opExOverrides } : {}),
     }));
   } catch {
     return [];

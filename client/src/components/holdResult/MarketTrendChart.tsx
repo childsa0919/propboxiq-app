@@ -1,55 +1,73 @@
 // 12-month area rent-trend line chart (Mock 3A). Cyan line with a soft fill and
-// a highlighted dot on the latest month, a "+X% YoY" badge, and a "Area median ·
-// {ZIP}" caption.
-//
-// TODO(rent-trend-data): the 12-month series is MOCKED client-side. RentCast's
-// /markets endpoint exposes `rentData.history` (Foundation tier+) — wire a new
-// `/api/rent-trend?zip=` route (or extend /api/rent-comps) to return the real
-// area-median series and YoY, then pass it in via props instead of synthMonthly.
+// a highlighted dot on the latest month, a "+X.X% YoY" badge, and an "Area
+// median · {ZIP}" caption. Data is the real RentCast /markets rentalData history
+// (via /api/rent-market → useRentMarket); when the area has no market data the
+// card shows a clear empty state instead.
 
 import { useMemo } from "react";
 import { Line } from "react-chartjs-2";
 import type { ChartData, ChartOptions } from "chart.js";
 import { ensureChartsRegistered, CHART_COLORS } from "./chartSetup";
+import type { RentMarketPoint } from "@/lib/useRentMarket";
 
 ensureChartsRegistered();
 
-const MONTHS = ["Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May"];
-
-/**
- * Synthesize a plausible 12-month trend that ENDS at `medianRent` and rises a
- * total of ~`yoyPct` over the window. Purely cosmetic placeholder until the real
- * RentCast history series is wired (see TODO above).
- */
-function synthMonthly(medianRent: number, yoyPct: number): number[] {
-  const start = medianRent / (1 + yoyPct / 100);
-  const out: number[] = [];
-  for (let i = 0; i < 12; i++) {
-    const t = i / 11;
-    // gentle ease with a touch of wobble so it doesn't look perfectly linear
-    const base = start + (medianRent - start) * t;
-    const wobble = Math.sin(i * 1.1) * (medianRent * 0.004);
-    out.push(Math.round(base + wobble));
-  }
-  out[11] = Math.round(medianRent);
-  return out;
+// "YYYY-MM" → short month label ("Jan", "Feb", …) for the x-axis.
+const MONTH_NAMES = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+function monthLabel(ym: string): string {
+  const m = Number(ym.slice(5, 7));
+  return Number.isFinite(m) && m >= 1 && m <= 12 ? MONTH_NAMES[m - 1] : ym;
 }
 
 export interface MarketTrendChartProps {
-  medianRent: number;
   zip: string;
-  yoyPct?: number; // default +4.2 (mocked)
+  history: RentMarketPoint[];
+  yoyChange: number;
+  isLoading?: boolean;
+  available?: boolean;
 }
 
-export default function MarketTrendChart({ medianRent, zip, yoyPct = 4.2 }: MarketTrendChartProps) {
-  const series = useMemo(() => synthMonthly(medianRent, yoyPct), [medianRent, yoyPct]);
-  const lo = Math.min(...series);
-  const hi = Math.max(...series);
-  const pad = Math.max(40, (hi - lo) * 0.4);
+function Shell({
+  zip,
+  children,
+  badge,
+}: {
+  zip: string;
+  children: React.ReactNode;
+  badge?: React.ReactNode;
+}) {
+  return (
+    <div
+      className="relative rounded-2xl border p-[14px_12px] backdrop-blur-md"
+      style={{ background: "rgba(255,255,255,0.10)", borderColor: "rgba(255,255,255,0.07)" }}
+      data-testid="card-rent-trend"
+    >
+      <div className="mb-1 text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+        12-mo rent trend
+      </div>
+      {badge}
+      {children}
+      <div className="mt-1 text-[9px] text-white/85">Area median · {zip || "—"}</div>
+    </div>
+  );
+}
+
+export default function MarketTrendChart({
+  zip,
+  history,
+  yoyChange,
+  isLoading = false,
+  available = true,
+}: MarketTrendChartProps) {
+  const series = useMemo(() => history.map((h) => h.median), [history]);
+  const labels = useMemo(() => history.map((h) => monthLabel(h.month)), [history]);
 
   const data = useMemo<ChartData<"line">>(
     () => ({
-      labels: MONTHS,
+      labels,
       datasets: [
         {
           data: series,
@@ -63,8 +81,15 @@ export default function MarketTrendChart({ medianRent, zip, yoyPct = 4.2 }: Mark
         },
       ],
     }),
-    [series],
+    [series, labels],
   );
+
+  const { lo, hi, pad } = useMemo(() => {
+    if (series.length === 0) return { lo: 0, hi: 0, pad: 40 };
+    const lo = Math.min(...series);
+    const hi = Math.max(...series);
+    return { lo, hi, pad: Math.max(40, (hi - lo) * 0.4) };
+  }, [series]);
 
   const options = useMemo<ChartOptions<"line">>(
     () => ({
@@ -87,26 +112,47 @@ export default function MarketTrendChart({ medianRent, zip, yoyPct = 4.2 }: Mark
     [lo, hi, pad],
   );
 
-  return (
+  if (isLoading) {
+    return (
+      <Shell zip={zip}>
+        <div className="flex h-20 items-center justify-center text-[10px] text-muted-foreground">
+          Loading trend…
+        </div>
+      </Shell>
+    );
+  }
+
+  if (!available || series.length < 2) {
+    return (
+      <Shell zip={zip}>
+        <div className="flex h-20 items-center justify-center px-2 text-center text-[10px] leading-[1.4] text-muted-foreground">
+          Trend data unavailable for this area
+        </div>
+      </Shell>
+    );
+  }
+
+  const yoyPositive = yoyChange >= 0;
+  const badge = (
     <div
-      className="relative rounded-2xl border p-[14px_12px] backdrop-blur-md"
-      style={{ background: "rgba(255,255,255,0.10)", borderColor: "rgba(255,255,255,0.07)" }}
-      data-testid="card-rent-trend"
+      className="absolute right-3 top-3 rounded-lg border px-[7px] py-[3px] text-[9px] font-extrabold"
+      style={
+        yoyPositive
+          ? { background: "rgba(74,222,128,0.12)", borderColor: "rgba(74,222,128,0.3)", color: "#4ade80" }
+          : { background: "rgba(248,113,113,0.12)", borderColor: "rgba(248,113,113,0.3)", color: "#f87171" }
+      }
+      data-testid="badge-yoy"
     >
-      <div className="mb-1 text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
-        12-mo rent trend
-      </div>
-      <div
-        className="absolute right-3 top-3 rounded-lg border px-[7px] py-[3px] text-[9px] font-extrabold"
-        style={{ background: "rgba(74,222,128,0.12)", borderColor: "rgba(74,222,128,0.3)", color: "#4ade80" }}
-        data-testid="badge-yoy"
-      >
-        +{yoyPct}% YoY
-      </div>
+      {yoyPositive ? "+" : ""}
+      {yoyChange.toFixed(1)}% YoY
+    </div>
+  );
+
+  return (
+    <Shell zip={zip} badge={badge}>
       <div className="relative mt-2 h-20">
         <Line data={data} options={options} />
       </div>
-      <div className="mt-1 text-[9px] text-white/85">Area median · {zip}</div>
-    </div>
+    </Shell>
   );
 }
