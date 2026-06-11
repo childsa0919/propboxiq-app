@@ -755,6 +755,106 @@ export async function registerRoutes(
     });
   });
 
+  // ----- Rent market trend (RentCast /markets rentalData) -----
+  // Returns the area-median rent plus a 12-month history + YoY change for the
+  // Hold result page's "12-mo rent trend" chart. Mirrors /api/rent-comps: same
+  // RentCast SQLite cache (24h), typed-error handling, and a clean
+  // `{ available: false }` envelope when the ZIP has no rental market data.
+  // propertyType filters RentCast's dataByPropertyType slice; defaults to
+  // Single Family. History is on the Foundation tier (same as /api/market/:zip).
+  app.get("/api/rent-market", async (req: Request, res: Response) => {
+    const zip = String(req.query.zip ?? "").trim();
+    if (!/^\d{5}$/.test(zip)) {
+      return res.status(400).json({ error: "valid 5-digit ZIP required" });
+    }
+    if (!process.env.RENTCAST_API_KEY) {
+      return res.status(503).json({
+        error: "data_provider_auth",
+        message: "Property data temporarily unavailable",
+      });
+    }
+
+    // Map the client property-type token to RentCast's dataByPropertyType label.
+    const ptParam = String(req.query.propertyType ?? "single-family").trim();
+    const PT_LABEL: Record<string, string> = {
+      "single-family": "Single Family",
+      "multi-family": "Multi-Family",
+      condo: "Condo",
+    };
+    const ptLabel = PT_LABEL[ptParam] ?? "Single Family";
+
+    let market: any;
+    try {
+      market = await rcGet("markets", { zipCode: zip, historyRange: 12 });
+    } catch (e) {
+      if (sendRentcastErrorResponse(res, e)) return;
+      console.warn("[rent-market] rentcast error:", (e as Error).message);
+      return res.status(503).json({
+        error: "data_provider_unavailable",
+        message: "Rent trend temporarily unavailable",
+      });
+    }
+
+    const rentalData: any = market?.rentalData ?? null;
+    if (!rentalData) {
+      return res.json({ available: false });
+    }
+
+    // Prefer the requested property-type slice; fall back to the all-types
+    // aggregate when that slice (or its rent) is missing.
+    const byType = Array.isArray(rentalData.dataByPropertyType)
+      ? rentalData.dataByPropertyType
+      : [];
+    const slice =
+      byType.find((s: any) => s?.propertyType === ptLabel) ?? null;
+
+    const num = (v: unknown): number | null => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+    };
+    // RentCast exposes averageRent / medianRent depending on the dataset; take
+    // median first, fall back to average.
+    const rentOf = (o: any): number | null =>
+      num(o?.medianRent) ?? num(o?.averageRent);
+
+    const currentMedian = rentOf(slice) ?? rentOf(rentalData);
+
+    // history is keyed by YYYY-MM. Pull the per-type slice's history when
+    // present, else the top-level history. Sort ascending, keep last 12.
+    const histObj: Record<string, any> =
+      slice?.history && typeof slice.history === "object"
+        ? slice.history
+        : rentalData.history && typeof rentalData.history === "object"
+          ? rentalData.history
+          : {};
+    const history = Object.keys(histObj)
+      .filter((k) => /^\d{4}-\d{2}/.test(k))
+      .sort()
+      .map((month) => ({ month: month.slice(0, 7), median: rentOf(histObj[month]) }))
+      .filter((h): h is { month: string; median: number } => h.median != null)
+      .slice(-12);
+
+    if (currentMedian == null || history.length < 2) {
+      return res.json({ available: false });
+    }
+
+    // YoY: latest vs. the oldest point in the (≤12-month) window — which is the
+    // point ~12 months back when we have a full year of history.
+    const latest = history[history.length - 1].median;
+    const earliest = history[0].median;
+    const yoyChange =
+      earliest > 0 ? Math.round(((latest - earliest) / earliest) * 1000) / 10 : 0;
+
+    res.json({
+      available: true,
+      zip,
+      propertyType: ptParam,
+      currentMedian,
+      yoyChange,
+      history,
+    });
+  });
+
   // ----- Subject property facts via RentCast (cheap lookup) -----
   // Returns sqft / beds / baths / yearBuilt for the address so we can prefill
   // the post-rehab spec inputs with the as-is footprint.

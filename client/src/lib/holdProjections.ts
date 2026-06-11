@@ -120,17 +120,18 @@ export interface OpExSlice {
   color: string;
 }
 
-// Default OpEx mix per Mock 3A. Percentages are shares of TOTAL monthly
-// operating cost INCLUDING PITI (debt service), which is why they sum to 100.
-export const OPEX_DEFAULT_PCTS = {
-  piti: 52,
-  propTax: 12,
-  mgmt: 10,
-  maint: 8,
-  insurance: 8,
-  vacancy: 5,
-  capex: 5,
-} as const;
+// Keys for the editable (non-PITI) operating-cost rows. PITI is derived from
+// loan terms and is NOT user-adjustable here.
+export type OpExEditableKey =
+  | "propTax"
+  | "insurance"
+  | "vacancy"
+  | "mgmt"
+  | "maint"
+  | "capex";
+
+// User overrides as decimal shares of total monthly OpEx (e.g. 0.012 = 1.2%).
+export type OpExOverrideMap = Partial<Record<OpExEditableKey, number>>;
 
 const OPEX_COLORS: Record<string, string> = {
   piti: "#126D85",
@@ -142,34 +143,94 @@ const OPEX_COLORS: Record<string, string> = {
   capex: "#a78bfa",
 };
 
+const OPEX_ROW_META: { key: string; label: string; short: string; editable: boolean }[] = [
+  { key: "piti", label: "PITI", short: "PITI", editable: false },
+  { key: "propTax", label: "Property taxes", short: "Prop tax", editable: true },
+  { key: "vacancy", label: "Vacancy reserve", short: "Vacancy", editable: true },
+  { key: "mgmt", label: "Property mgmt", short: "Mgmt", editable: true },
+  { key: "maint", label: "Maintenance", short: "Maint.", editable: true },
+  { key: "insurance", label: "Insurance", short: "Insurance", editable: true },
+  { key: "capex", label: "CapEx reserve", short: "CapEx", editable: true },
+];
+
 /**
- * OpEx breakdown for the doughnut + table. `total` is the monthly all-in cost
- * (PITI + reserves + tax + insurance). Each slice's $ amount is `total × pct`,
- * keeping the chart and table internally consistent with the documented mix.
- * Order matches the legend in the mock.
+ * Apply OpEx overrides to the engine inputs. Each override is a decimal share
+ * of the BASE (unedited) total monthly OpEx; we convert that target $ back into
+ * the engine's native inputs:
+ *   • propTax / insurance → annual $ (×12)
+ *   • vacancy / mgmt / maint / capex → % of gross monthly rent
+ * PITI (P&I) is never touched — only operating costs are editable. Returns a
+ * new HoldInputs; the original is unmodified.
+ */
+export function applyOpExOverrides(
+  input: HoldInputs,
+  base: HoldResults,
+  overrides: OpExOverrideMap | undefined,
+): HoldInputs {
+  if (!overrides || Object.keys(overrides).length === 0) return input;
+  const baseTotal = base.piti + base.reservesTotal;
+  const rent = input.monthlyRent;
+  const next: HoldInputs = { ...input };
+
+  const targetDollar = (share: number) => Math.max(0, share) * baseTotal;
+
+  if (overrides.propTax != null) {
+    next.annualPropertyTax = targetDollar(overrides.propTax) * 12;
+  }
+  if (overrides.insurance != null) {
+    next.annualInsurance = targetDollar(overrides.insurance) * 12;
+  }
+  // Reserve rows are % of gross rent. When rent is 0 we can't express a $ as a
+  // %, so leave the reserve untouched (the override has no usable target).
+  if (rent > 0) {
+    if (overrides.vacancy != null) {
+      next.vacancyPct = (targetDollar(overrides.vacancy) / rent) * 100;
+    }
+    if (overrides.mgmt != null) {
+      next.managementPct = (targetDollar(overrides.mgmt) / rent) * 100;
+    }
+    if (overrides.maint != null) {
+      next.maintenancePct = (targetDollar(overrides.maint) / rent) * 100;
+    }
+    if (overrides.capex != null) {
+      next.capexPct = (targetDollar(overrides.capex) / rent) * 100;
+    }
+  }
+  return next;
+}
+
+/**
+ * OpEx breakdown for the doughnut + table, derived from the REAL engine results
+ * `r` (no fixed default percentages). Each row's $ is the actual monthly figure
+ * the engine computed; the % is that row's share of the all-in monthly total
+ * (P&I + tax + insurance + reserves). PITI here is the debt-service slice (P&I)
+ * — tax + insurance are broken out as their own rows. Order matches the mock.
  */
 export function opexBreakdown(r: HoldResults): {
   total: number;
   slices: OpExSlice[];
 } {
-  const total = r.piti + r.reservesTotal;
-  const rows: { key: string; label: string; short: string; pct: number }[] = [
-    { key: "piti", label: "PITI", short: "PITI", pct: OPEX_DEFAULT_PCTS.piti },
-    { key: "propTax", label: "Property taxes", short: "Prop tax", pct: OPEX_DEFAULT_PCTS.propTax },
-    { key: "vacancy", label: "Vacancy reserve", short: "Vacancy", pct: OPEX_DEFAULT_PCTS.vacancy },
-    { key: "mgmt", label: "Property mgmt", short: "Mgmt", pct: OPEX_DEFAULT_PCTS.mgmt },
-    { key: "maint", label: "Maintenance", short: "Maint.", pct: OPEX_DEFAULT_PCTS.maint },
-    { key: "insurance", label: "Insurance", short: "Insurance", pct: OPEX_DEFAULT_PCTS.insurance },
-    { key: "capex", label: "CapEx reserve", short: "CapEx", pct: OPEX_DEFAULT_PCTS.capex },
-  ];
-  const slices = rows.map((row) => ({
-    key: row.key,
-    label: row.label,
-    short: row.short,
-    pct: row.pct,
-    amount: Math.round((total * row.pct) / 100),
-    color: OPEX_COLORS[row.key],
-  }));
+  const amounts: Record<string, number> = {
+    piti: r.monthlyPI,
+    propTax: r.monthlyTax,
+    insurance: r.monthlyInsurance,
+    vacancy: r.vacancy,
+    mgmt: r.management,
+    maint: r.maintenance,
+    capex: r.capex,
+  };
+  const total = Object.values(amounts).reduce((a, b) => a + b, 0);
+  const slices: OpExSlice[] = OPEX_ROW_META.map((row) => {
+    const amount = amounts[row.key] ?? 0;
+    return {
+      key: row.key,
+      label: row.label,
+      short: row.short,
+      pct: total > 0 ? Math.round((amount / total) * 1000) / 10 : 0,
+      amount: Math.round(amount),
+      color: OPEX_COLORS[row.key],
+    };
+  });
   return { total: Math.round(total), slices };
 }
 
@@ -190,18 +251,44 @@ export interface BrrrrResult {
   equityLeftInDeal: number; // total cost − cash out
   equityPctOfCost: number;
   verdict: BrrrrVerdict;
+  arvSource: ArvSource; // how ARV was derived (comps vs flat estimate)
 }
 
 export const BRRRR_REFI_LTV = 0.75;
-// TODO(brrrr-arv): refine ARV with real comp-derived value (RentCast /avm or
-// comp percentile) in a follow-up PR. For v1 we use a flat post-rehab uplift.
+// Flat post-rehab uplift used only when comp data is unavailable.
 export const BRRRR_ARV_UPLIFT = 1.1; // ARV = purchase × 1.1
+// Small uplift applied to the comp-derived median value to reflect post-rehab
+// condition vs. the raw (mixed-condition) comp median.
+export const BRRRR_COMP_UPLIFT = 1.05;
+// Minimum usable comps before we trust a comp-derived ARV over the flat uplift.
+export const BRRRR_MIN_COMPS = 3;
 export const BRRRR_CLOSING_PCT = 0.05; // closing ≈ 5% of purchase
+
+/** Minimal sale-comp shape needed to derive ARV from $/sqft. */
+export interface SaleComp {
+  pricePerSqft: number | null;
+}
+
+/** How the ARV in a BrrrrResult was derived. */
+export type ArvSource =
+  | { kind: "comps"; compCount: number; medianPpsf: number }
+  | { kind: "estimate" };
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
 
 /**
  * BRRRR (Buy, Rehab, Rent, Refinance) capital-recycling feasibility.
  *   totalCost      = purchase + rehab + closing (5% of purchase)
- *   ARV            = purchase × 1.1 (flat uplift — see TODO above)
+ *   ARV            = comp-derived (subject sqft × median comp $/sqft × 1.05)
+ *                    when ≥3 comps with $/sqft are supplied AND subject sqft is
+ *                    known; otherwise purchase × 1.1 (flat fallback)
  *   refiLoan       = ARV × 0.75
  *   currentLoan    = original purchase loan (purchase × (1 − downPct))
  *   cashOut        = refiLoan − currentLoan
@@ -210,12 +297,35 @@ export const BRRRR_CLOSING_PCT = 0.05; // closing ≈ 5% of purchase
  *                  partial  (0 < equity ≤ 20% of total cost)
  *                  typical  (equity > 20% of total cost)
  */
-export function computeBrrrr(input: HoldInputs): BrrrrResult {
+export function computeBrrrr(
+  input: HoldInputs,
+  opts?: { comps?: SaleComp[]; subjectSqft?: number | null },
+): BrrrrResult {
   const purchase = input.purchasePrice;
   const rehab = input.rehab;
   const closing = purchase * BRRRR_CLOSING_PCT;
   const totalCost = purchase + rehab + closing;
-  const arv = purchase * BRRRR_ARV_UPLIFT;
+
+  // ARV: prefer comp-derived value when we have enough comps + a subject sqft.
+  const ppsfList = (opts?.comps ?? [])
+    .map((c) => c.pricePerSqft)
+    .filter((n): n is number => n != null && Number.isFinite(n) && n > 0);
+  const subjectSqft = opts?.subjectSqft ?? null;
+  let arv: number;
+  let arvSource: ArvSource;
+  if (ppsfList.length >= BRRRR_MIN_COMPS && subjectSqft && subjectSqft > 0) {
+    const medianPpsf = median(ppsfList);
+    arv = subjectSqft * medianPpsf * BRRRR_COMP_UPLIFT;
+    arvSource = {
+      kind: "comps",
+      compCount: ppsfList.length,
+      medianPpsf: Math.round(medianPpsf),
+    };
+  } else {
+    arv = purchase * BRRRR_ARV_UPLIFT;
+    arvSource = { kind: "estimate" };
+  }
+
   const refiLoan = arv * BRRRR_REFI_LTV;
   const currentLoan = purchase * (1 - pct(input.downPct));
   const cashOut = refiLoan - currentLoan;
@@ -240,6 +350,7 @@ export function computeBrrrr(input: HoldInputs): BrrrrResult {
     equityLeftInDeal: Math.round(equityLeftInDeal),
     equityPctOfCost: Math.round(equityPctOfCost * 10) / 10,
     verdict,
+    arvSource,
   };
 }
 
