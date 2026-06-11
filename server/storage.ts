@@ -2,8 +2,9 @@ import { deals, users, magicTokens, sessions } from '@shared/schema';
 import type { Deal, InsertDeal, User, MagicToken, Session } from '@shared/schema';
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { and, eq, desc, gt, isNull, or } from "drizzle-orm";
+import { and, eq, desc, gt, lt, isNull, or } from "drizzle-orm";
 import { mkdirSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 
 // DATA_DIR points at a persistent disk in production (e.g. /var/data on Render).
@@ -24,7 +25,12 @@ sqlite.exec(`
     email TEXT NOT NULL UNIQUE,
     name TEXT,
     created_at INTEGER NOT NULL,
-    last_login_at INTEGER
+    last_login_at INTEGER,
+    welcome_email_sent_at INTEGER,
+    drip_day2_sent_at INTEGER,
+    drip_day5_sent_at INTEGER,
+    unsubscribed_at INTEGER,
+    unsubscribe_token TEXT
   );
 
   CREATE TABLE IF NOT EXISTS magic_tokens (
@@ -107,6 +113,27 @@ for (const [col, ddl] of [
   }
 }
 
+// v1.5.2 migration: welcome-drip campaign columns on users. Same per-column
+// guarded-ALTER pattern as the deals migrations above so a partial upgrade
+// finishes on the next boot.
+for (const [col, ddl] of [
+  ["welcome_email_sent_at", "ALTER TABLE users ADD COLUMN welcome_email_sent_at INTEGER;"],
+  ["drip_day2_sent_at", "ALTER TABLE users ADD COLUMN drip_day2_sent_at INTEGER;"],
+  ["drip_day5_sent_at", "ALTER TABLE users ADD COLUMN drip_day5_sent_at INTEGER;"],
+  ["unsubscribed_at", "ALTER TABLE users ADD COLUMN unsubscribed_at INTEGER;"],
+  ["unsubscribe_token", "ALTER TABLE users ADD COLUMN unsubscribe_token TEXT;"],
+] as const) {
+  try {
+    const cols = sqlite.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === col)) {
+      sqlite.exec(ddl);
+      console.log(`[storage] migration: added users.${col}`);
+    }
+  } catch (e) {
+    console.warn(`users.${col} migration skipped:`, e);
+  }
+}
+
 // One-time deal wipe — set WIPE_DEALS_ON_BOOT=1 in env. Idempotent guard:
 // after wiping, writes a marker row so subsequent restarts don't wipe again,
 // even if the env var is left set by mistake. To wipe again later, set the
@@ -156,8 +183,22 @@ export interface IStorage {
   // Users
   getUserById(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
-  upsertUser(email: string, name?: string | null): Promise<User>;
+  getUserByUnsubscribeToken(token: string): Promise<User | undefined>;
+  // Returns `isNew: true` only the first time a given email is seen — that's
+  // the signal the welcome-drip campaign hooks into on first OAuth login.
+  upsertUser(email: string, name?: string | null): Promise<{ user: User; isNew: boolean }>;
   touchLogin(userId: number): Promise<void>;
+
+  // Welcome-drip campaign markers (idempotency + opt-out)
+  markWelcomeSent(userId: number): Promise<void>;
+  markDrip2Sent(userId: number): Promise<void>;
+  markDrip5Sent(userId: number): Promise<void>;
+  markUnsubscribed(token: string): Promise<User | undefined>;
+  resubscribe(token: string): Promise<User | undefined>;
+  // Drip-batch queries (Option-A cron fallback). Each returns users due for
+  // the given email that haven't received it and haven't unsubscribed.
+  usersDueForDrip2(now: number): Promise<User[]>;
+  usersDueForDrip5(now: number): Promise<User[]>;
 
   // Magic tokens
   createMagicToken(token: string, email: string, ttlMs: number): Promise<void>;
@@ -245,20 +286,108 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(users).where(eq(users.email, email.toLowerCase())).get();
   }
 
-  async upsertUser(email: string, name?: string | null): Promise<User> {
+  async getUserByUnsubscribeToken(token: string): Promise<User | undefined> {
+    if (!token) return undefined;
+    return db.select().from(users).where(eq(users.unsubscribeToken, token)).get();
+  }
+
+  async upsertUser(email: string, name?: string | null): Promise<{ user: User; isNew: boolean }> {
     const lower = email.toLowerCase().trim();
     const existing = await this.getUserByEmail(lower);
-    if (existing) return existing;
+    if (existing) {
+      // Backfill an unsubscribe token for users created before this column existed.
+      if (!existing.unsubscribeToken) {
+        const token = randomBytes(32).toString("base64url");
+        const updated = db
+          .update(users)
+          .set({ unsubscribeToken: token })
+          .where(eq(users.id, existing.id))
+          .returning()
+          .get();
+        return { user: updated, isNew: false };
+      }
+      return { user: existing, isNew: false };
+    }
     const now = Date.now();
-    return db
+    const user = db
       .insert(users)
-      .values({ email: lower, name: name ?? null, createdAt: now, lastLoginAt: null })
+      .values({
+        email: lower,
+        name: name ?? null,
+        createdAt: now,
+        lastLoginAt: null,
+        unsubscribeToken: randomBytes(32).toString("base64url"),
+      })
       .returning()
       .get();
+    return { user, isNew: true };
   }
 
   async touchLogin(userId: number): Promise<void> {
     db.update(users).set({ lastLoginAt: Date.now() }).where(eq(users.id, userId)).run();
+  }
+
+  // ---------- Welcome-drip campaign ----------
+  async markWelcomeSent(userId: number): Promise<void> {
+    db.update(users).set({ welcomeEmailSentAt: Date.now() }).where(eq(users.id, userId)).run();
+  }
+
+  async markDrip2Sent(userId: number): Promise<void> {
+    db.update(users).set({ dripDay2SentAt: Date.now() }).where(eq(users.id, userId)).run();
+  }
+
+  async markDrip5Sent(userId: number): Promise<void> {
+    db.update(users).set({ dripDay5SentAt: Date.now() }).where(eq(users.id, userId)).run();
+  }
+
+  async markUnsubscribed(token: string): Promise<User | undefined> {
+    if (!token) return undefined;
+    return db
+      .update(users)
+      .set({ unsubscribedAt: Date.now() })
+      .where(eq(users.unsubscribeToken, token))
+      .returning()
+      .get();
+  }
+
+  async resubscribe(token: string): Promise<User | undefined> {
+    if (!token) return undefined;
+    return db
+      .update(users)
+      .set({ unsubscribedAt: null })
+      .where(eq(users.unsubscribeToken, token))
+      .returning()
+      .get();
+  }
+
+  async usersDueForDrip2(now: number): Promise<User[]> {
+    const cutoff = now - 2 * 24 * 60 * 60 * 1000;
+    return db
+      .select()
+      .from(users)
+      .where(
+        and(
+          lt(users.welcomeEmailSentAt, cutoff),
+          isNull(users.dripDay2SentAt),
+          isNull(users.unsubscribedAt),
+        ),
+      )
+      .all();
+  }
+
+  async usersDueForDrip5(now: number): Promise<User[]> {
+    const cutoff = now - 5 * 24 * 60 * 60 * 1000;
+    return db
+      .select()
+      .from(users)
+      .where(
+        and(
+          lt(users.welcomeEmailSentAt, cutoff),
+          isNull(users.dripDay5SentAt),
+          isNull(users.unsubscribedAt),
+        ),
+      )
+      .all();
   }
 
   // ---------- Magic tokens ----------

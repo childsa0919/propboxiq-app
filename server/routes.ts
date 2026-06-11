@@ -31,6 +31,16 @@ import {
   RentCastRateLimitError,
   RentCastUpstreamError,
 } from "./rentcast";
+import {
+  runWelcomeDrip,
+  sendDripBatch,
+  unsubscribeContactInAudience,
+} from "./emails/campaign";
+import {
+  unsubscribedPage,
+  resubscribedPage,
+  invalidTokenPage,
+} from "./emails/unsubscribe-page";
 
 // Map a typed RentCast error to a 503 + friendly body. Returns true if a
 // response was sent. Routes call this in their catch blocks so they don't
@@ -101,7 +111,7 @@ export async function registerRoutes(
 
     const reviewerEmail = (process.env.APP_REVIEWER_EMAIL || "").trim().toLowerCase();
     if (reviewerEmail && email === reviewerEmail) {
-      const user = await storage.upsertUser(email);
+      const { user } = await storage.upsertUser(email);
       await storage.touchLogin(user.id);
       const sid = newToken(48);
       await storage.createSession(sid, user.id, TIMINGS.SESSION_TTL_MS);
@@ -140,7 +150,7 @@ export async function registerRoutes(
         </body></html>`
       );
     }
-    const user = await storage.upsertUser(consumed.email);
+    const { user } = await storage.upsertUser(consumed.email);
     await storage.touchLogin(user.id);
     const sid = newToken(48);
     await storage.createSession(sid, user.id, TIMINGS.SESSION_TTL_MS);
@@ -273,8 +283,17 @@ export async function registerRoutes(
         return res.status(400).send("Google account has no email on file");
       }
 
-      const user = await storage.upsertUser(profile.email, profile.name ?? null);
+      const { user, isNew } = await storage.upsertUser(profile.email, profile.name ?? null);
       await storage.touchLogin(user.id);
+
+      // First Google login → kick off the welcome drip. Best-effort and
+      // fire-and-forget so a slow/failed Resend call never blocks sign-in.
+      if (isNew) {
+        runWelcomeDrip(user).catch((e) =>
+          console.error("[google-oauth] welcome drip failed", e),
+        );
+      }
+
       const sid = newToken(48);
       await storage.createSession(sid, user.id, TIMINGS.SESSION_TTL_MS);
 
@@ -322,6 +341,55 @@ export async function registerRoutes(
     clearSessionCookie(res);
     res.json({ ok: true });
   });
+
+  // ----- Unsubscribe (one-click) -----
+  // Linked from every welcome-drip email footer and the RFC-8058
+  // List-Unsubscribe header. Sets unsubscribed_at (gates all future sends)
+  // and marks the Resend audience contact unsubscribed so broadcasts skip them.
+  app.get("/unsubscribe", async (req: Request, res: Response) => {
+    const token = String(req.query.token ?? "");
+    const user = await storage.markUnsubscribed(token);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    if (!user) return res.status(404).send(invalidTokenPage());
+    unsubscribeContactInAudience(user.email).catch((e) =>
+      console.error("[unsubscribe] audience sync failed", e),
+    );
+    res.send(unsubscribedPage(token));
+  });
+
+  // Some mail clients POST the one-click List-Unsubscribe; accept it too.
+  app.post("/unsubscribe", async (req: Request, res: Response) => {
+    const token = String(req.query.token ?? req.body?.token ?? "");
+    const user = await storage.markUnsubscribed(token);
+    if (user) {
+      unsubscribeContactInAudience(user.email).catch((e) =>
+        console.error("[unsubscribe] audience sync failed", e),
+      );
+    }
+    res.status(200).end();
+  });
+
+  app.get("/unsubscribe/resubscribe", async (req: Request, res: Response) => {
+    const token = String(req.query.token ?? "");
+    const user = await storage.resubscribe(token);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    if (!user) return res.status(404).send(invalidTokenPage());
+    res.send(resubscribedPage());
+  });
+
+  // ----- Internal: drip batch (Option-A cron fallback) -----
+  // Protected by a bearer token. Safe to run alongside Resend scheduling —
+  // it only sends drips that are due AND not yet marked sent.
+  app.post("/api/internal/send-drip-batch", async (req: Request, res: Response) => {
+    const expected = process.env.INTERNAL_CRON_TOKEN;
+    if (!expected) return res.status(503).json({ error: "cron not configured" });
+    const auth = req.headers.authorization ?? "";
+    const provided = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
+    if (provided !== expected) return res.status(401).json({ error: "unauthorized" });
+    const result = await sendDripBatch();
+    res.json({ ok: true, ...result });
+  });
+
   // ----- Address autocomplete -----
   // Strategy: RentCast /properties first (resolves on partial street, no city
   // required), then fall back to Census Geocoder (rigid "street + city" match)
