@@ -503,12 +503,17 @@ html.is-native-ios p {
   user-select: text;
 }
 
-/* Push the sticky app header below the iOS status bar / Dynamic Island. */
-html.is-native-ios header.sticky {
-  padding-top: env(safe-area-inset-top);
-}
-html.is-native-ios header.sticky > div {
-  /* Some headers cap their height at h-14; safe-area lives in padding-top */
+/* Push the sticky app header below the iOS status bar / Dynamic Island.
+
+   Applied to ALL contexts (not just the .is-native-ios shell): with
+   `viewport-fit=cover` the webview extends under the status bar in both the
+   Capacitor app AND mobile Safari at app.propboxiq.com, so the inset must be
+   honored in both. On devices/browsers without a notch, env(safe-area-inset-*)
+   resolves to 0, so this is a harmless no-op there. Gating it behind
+   .is-native-ios (the prior behavior) left mobile Safari with the header
+   jammed under the status bar — the reported overlap. */
+header.sticky.top-0 {
+  padding-top: env(safe-area-inset-top, 0px);
 }
 
 /* Push fixed bottom CTAs above the home indicator. Components that use
