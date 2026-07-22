@@ -74,17 +74,27 @@ function sendRentcastErrorResponse(res: Response, err: unknown): boolean {
 const CENSUS_BASE =
   "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress";
 
-async function fetchJson(url: string, init?: RequestInit) {
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      "User-Agent": "FlipAnalyzer/1.0 (real estate deal analyzer)",
-      Accept: "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
-  if (!res.ok) throw new Error(`Upstream ${res.status}`);
-  return res.json();
+async function fetchJson(url: string, init?: RequestInit, timeoutMs = 8000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "FlipAnalyzer/1.0 (real estate deal analyzer)",
+        Accept: "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+    if (!res.ok) throw new Error(`Upstream ${res.status}`);
+    return await res.json();
+  } catch (e: any) {
+    if (e?.name === "AbortError") throw new Error(`Upstream timeout after ${timeoutMs}ms`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function registerRoutes(
@@ -1425,26 +1435,44 @@ export async function registerRoutes(
       `where=${encodeURIComponent("Primacy_Agency='MD'")}&${common}`;
 
     // 4) Sewer service (MDP Generalized Sewer, statewide)
+    // Layer 0 was removed in an upstream MDP restructure (now returns HTTP 400).
+    // The service now exposes the data on layer 2 "Sewer Service Status" with the
+    // same field names, so we only need to repoint the layer id.
     const sewerUrl =
-      `https://mdpgis.mdp.state.md.us/arcgis/rest/services/UtilitiesCommunication/Generalized_Sewer/MapServer/0/query?` +
+      `https://mdpgis.mdp.state.md.us/arcgis/rest/services/UtilitiesCommunication/Generalized_Sewer/MapServer/2/query?` +
       `outFields=JURSCODE,SERVCAT,GENZ_SWR,WWTP_SHED,SEWSTAT&${common}`;
 
+    // Fetch one source with a hard timeout. A slow/dead upstream can never
+    // freeze the whole panel: fetchJson aborts after 8s and we tag the source
+    // so the tile degrades to "Lookup failed" instead of hanging Promise.all.
     const safe = async (url: string) => {
-      try {
-        const data: any = await fetchJson(url);
-        if (data?.error) return { error: data.error?.message ?? "Upstream error" };
-        return data;
-      } catch (e: any) {
-        return { error: e?.message ?? "Fetch failed" };
+      const data: any = await fetchJson(url);
+      if (data?.error) {
+        throw new Error(data.error?.message ?? "Upstream error");
       }
+      return data;
     };
 
-    const [ca, hs, water, sewer] = await Promise.all([
+    const settled = await Promise.allSettled([
       safe(criticalAreaUrl),
       safe(hsUrl),
       safe(waterUrl),
       safe(sewerUrl),
     ]);
+
+    const sourceNames = ["criticalArea", "highSchool", "water", "sewer"] as const;
+    const unwrap = (i: number) => {
+      const r = settled[i];
+      if (r.status === "fulfilled") return r.value;
+      const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      console.warn("[site-intel] source failed", sourceNames[i], reason);
+      return { error: reason };
+    };
+    const [ca, hs, water, sewer] = [unwrap(0), unwrap(1), unwrap(2), unwrap(3)];
+    const allFailed = settled.every((r) => r.status === "rejected");
+    if (allFailed) {
+      return res.status(500).json({ error: "All site-intelligence sources failed" });
+    }
 
     // ----- Critical Area normalization -----
     // Coverage check: AACO and Calvert only. We infer county from HS or sewer JURSCODE

@@ -102,10 +102,12 @@ function StatusPanel({
   PanelIcon,
 }: {
   panelLabel: string;
-  data: PanelData;
+  data: PanelData | undefined;
   PanelIcon: typeof Waves;
 }) {
-  const tokens = stateTokens[data.state] ?? stateTokens.unknown;
+  const tile: PanelData =
+    data ?? { state: "unknown", label: "Lookup failed", meta: "" };
+  const tokens = stateTokens[tile.state] ?? stateTokens.unknown;
   return (
     <div
       className="rounded-lg p-3 flex flex-col gap-2"
@@ -139,9 +141,9 @@ function StatusPanel({
             }}
           >
             {panelLabel}
-            {data.scope && (
+            {tile.scope && (
               <span style={{ marginLeft: 4, color: "#94a3b8" }}>
-                · {data.scope}
+                · {tile.scope}
               </span>
             )}
           </div>
@@ -155,11 +157,11 @@ function StatusPanel({
                 "'General Sans', 'Inter', system-ui, sans-serif",
             }}
           >
-            {data.label}
+            {tile.label}
           </div>
         </div>
       </div>
-      {data.meta && (
+      {tile.meta && (
         <div
           className="pt-2 leading-snug"
           style={{
@@ -169,7 +171,7 @@ function StatusPanel({
             lineHeight: 1.4,
           }}
         >
-          {data.meta}
+          {tile.meta}
         </div>
       )}
     </div>
@@ -282,7 +284,7 @@ export function SiteIntelligence({ lat, lon }: Props) {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-        {isLoading || !data ? (
+        {isLoading ? (
           <>
             <SkeletonPanel label="Critical Area · AACO+Calvert" />
             <SkeletonPanel label="High School Zone" />
@@ -293,22 +295,22 @@ export function SiteIntelligence({ lat, lon }: Props) {
           <>
             <StatusPanel
               panelLabel="Critical Area"
-              data={data.criticalArea}
+              data={data?.criticalArea}
               PanelIcon={Waves}
             />
             <StatusPanel
               panelLabel="High School Zone"
-              data={data.highSchool}
+              data={data?.highSchool}
               PanelIcon={GraduationCap}
             />
             <StatusPanel
               panelLabel="Water Service"
-              data={data.water}
+              data={data?.water}
               PanelIcon={Droplets}
             />
             <StatusPanel
               panelLabel="Sewer Service"
-              data={data.sewer}
+              data={data?.sewer}
               PanelIcon={Network}
             />
           </>
