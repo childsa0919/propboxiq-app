@@ -58,6 +58,54 @@ export function stylesMatch(a: string | null, b: string | null): boolean {
   return na === nb || na.includes(nb) || nb.includes(na);
 }
 
+// --- Location: city + ZIP (v1.7.2 tiered comp ranking) ----------------------
+// City normalization: lowercase, trim, collapse whitespace, drop periods so
+// "St. Michaels" and "St Michaels" compare equal.
+export function normalizeCity(raw: unknown): string | null {
+  const s = clean(raw).replace(/\./g, "").trim();
+  return s || null;
+}
+
+// ZIP normalization: keep the 5-digit base, strip any ZIP+4 suffix.
+export function normalizeZip(raw: unknown): string | null {
+  const digits = String(raw ?? "").trim().match(/^(\d{5})/);
+  return digits ? digits[1] : null;
+}
+
+// Case-insensitive exact city match. Null on either side → no match.
+export function citiesMatch(a: unknown, b: unknown): boolean {
+  const na = normalizeCity(a);
+  const nb = normalizeCity(b);
+  return na != null && nb != null && na === nb;
+}
+
+// 5-digit ZIP match. Null on either side → no match.
+export function zipsMatch(a: unknown, b: unknown): boolean {
+  const na = normalizeZip(a);
+  const nb = normalizeZip(b);
+  return na != null && nb != null && na === nb;
+}
+
+// Assign a comp to one of six priority tiers (1 = best). City always wins the
+// label: a same-city comp is Tier 1/2 even if it also shares the ZIP. Style is
+// the secondary axis within each location band.
+export function compTier(
+  sameCity: boolean,
+  sameZip: boolean,
+  styleMatch: boolean,
+): 1 | 2 | 3 | 4 | 5 | 6 {
+  if (sameCity) return styleMatch ? 1 : 2;
+  if (sameZip) return styleMatch ? 3 : 4;
+  return styleMatch ? 5 : 6;
+}
+
+// Location label for the per-comp tier pill: SAME CITY / SAME ZIP / REGIONAL.
+export function tierLocationLabel(tier: number): "SAME CITY" | "SAME ZIP" | "REGIONAL" {
+  if (tier <= 2) return "SAME CITY";
+  if (tier <= 4) return "SAME ZIP";
+  return "REGIONAL";
+}
+
 // --- Combined HVAC label ----------------------------------------------------
 // One compact "heat / cool" style label for the comp hero HVAC badge. Returns
 // null only when BOTH sides are unknown.

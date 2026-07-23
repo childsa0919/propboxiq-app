@@ -12,6 +12,19 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.7.2",
+    date: "2026-07-22",
+    changed: [
+      "Comp ranking now prioritizes SAME CITY, then SAME ZIP, above raw price",
+      "ARV selection tier order: same-city+same-style → same-city → same-ZIP+same-style → same-ZIP → regional+same-style → regional",
+      "ARV card shows a summary line explaining which tier(s) drove the number",
+      "Each comp card shows a location tier badge (SAME CITY / SAME ZIP / REGIONAL)",
+    ],
+    added: [
+      "'Flooring' added to the default Walkthrough Budget line items (Interior Finish category)",
+    ],
+  },
+  {
     version: "1.7.1",
     date: "2026-07-22",
     fixed: [

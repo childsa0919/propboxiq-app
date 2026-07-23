@@ -42,7 +42,7 @@ const DEFAULT_ITEMS: Record<string, string[]> = {
   prep: ["Demo", "Dumpsters", "Water Proofing"],
   internal: ["Foundation", "Framing", "Insulation", "Drywall"],
   trades: ["Plumbing", "HVAC", "Electrical"],
-  interior: ["Trim/Moldings", "Paint", "Recessed Lights", "Light Fixtures"],
+  interior: ["Trim/Moldings", "Flooring", "Paint", "Recessed Lights", "Light Fixtures"],
   kitchen: [
     "Kitchen Cabinets",
     "Kitchen Countertops",
