@@ -98,14 +98,17 @@ export default function HoldResult() {
   const opex = useMemo(() => opexBreakdown(r), [r]);
   const baseOpex = useMemo(() => opexBreakdown(baseR), [baseR]);
 
-  // Sale comps feed the BRRRR ARV (median $/sqft × subject sqft). Falls back to
-  // a flat +10% uplift inside computeBrrrr when <3 comps or no subject sqft.
+  // Sale comps feed the BRRRR ARV. Prefer the server's unified ARV (same value
+  // the Flip result shows) so the two pages never disagree; fall back to the
+  // shared comp formula, then a flat +10% uplift when comps are unavailable.
   const saleComps = useSaleComps(state.address || null);
   const brrrr = useMemo(
     () =>
       computeBrrrr(inputs, {
         comps: saleComps.data?.comps,
         subjectSqft: saleComps.data?.subject.sqft ?? null,
+        arv: saleComps.data?.arv ?? null,
+        anchorPpsf: saleComps.data?.arvAnchorPpsf ?? null,
       }),
     [inputs, saleComps.data],
   );

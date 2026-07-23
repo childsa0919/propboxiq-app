@@ -9,16 +9,26 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Moon, Sun, LogOut, User as UserIcon } from "lucide-react";
+import { Moon, Sun, LogOut, User as UserIcon, Settings as SettingsIcon } from "lucide-react";
 import { useTheme } from "./ThemeProvider";
 import { useAuth } from "./AuthProvider";
 import { BlueprintGrid } from "./BlueprintGrid";
+import { useEffect, useState } from "react";
+import { APP_VERSION } from "@shared/version";
+import { hasUnseenRelease } from "@/lib/whatsNew";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { theme, toggle } = useTheme();
   const { user, signOut } = useAuth();
   const isDeals = location === "/deals";
+  const isSettings = location === "/settings";
+  // "What's New" badge — read once on mount and whenever the route changes so it
+  // clears immediately after the user visits Release Notes.
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
+  useEffect(() => {
+    setShowWhatsNew(hasUnseenRelease());
+  }, [location]);
   // Routes that render their own fixed bottom CTA — hide the global footer
   // entirely so it doesn't overlap the Continue button. (Previously only
   // hidden on mobile, but the wizard content is shorter than the desktop
@@ -61,6 +71,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 data-testid="link-deals"
               >
                 Deals
+              </Button>
+            </Link>
+            <Link href="/settings">
+              <Button
+                variant={isSettings ? "secondary" : "ghost"}
+                size="icon"
+                className="relative"
+                aria-label="Settings"
+                data-testid="link-settings"
+              >
+                <SettingsIcon className="h-4 w-4" />
+                {showWhatsNew && (
+                  <span
+                    className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-background"
+                    style={{ background: "#f5c948" }}
+                    aria-label="What's New"
+                    data-testid="badge-whats-new-dot"
+                  />
+                )}
               </Button>
             </Link>
             <Button
@@ -139,7 +168,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         }`}
       >
         <div className="mx-auto max-w-6xl px-4 sm:px-6 flex flex-wrap items-center justify-between gap-2">
-          <span>PropBoxIQ · Smart flip analysis</span>
+          <span>
+            © 2026 PropBoxIQ · Smart flip analysis{" "}
+            <span className="opacity-70" data-testid="text-footer-version">
+              v{APP_VERSION}
+            </span>
+          </span>
           <span>
             Address data via U.S. Census Geocoder · Maps © OpenStreetMap
           </span>

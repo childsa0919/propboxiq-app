@@ -40,7 +40,17 @@ const TOTAL_STEPS = STEP_COUNT + 1;
 
 // Shape returned by /api/comps
 type CompsResponse = {
-  subject: { address: string; sqft: number | null };
+  subject: {
+    address: string;
+    sqft: number | null;
+    style?: string | null;
+    heatingType?: string | null;
+    coolingType?: string | null;
+    hasPool?: boolean | null;
+    water?: "public" | "well" | "unknown";
+    sewer?: "public" | "septic" | "unknown";
+    waterSewerLabel?: string | null;
+  };
   target?: {
     sqft: number | null;
     beds: number | null;
@@ -51,6 +61,8 @@ type CompsResponse = {
   arvHigh: number;
   medianPricePerSqft: number | null;
   arvMethod?: string;
+  arvBasis?: "style-matched" | "top-price";
+  styleMatchCount?: number;
   arvAnchorPpsf?: number | null;
   arvTopCompIds?: string[];
   compCount: number;
@@ -75,6 +87,14 @@ type CompsResponse = {
     lat: number | null;
     lon: number | null;
     saleStatus: string | null;
+    style?: string | null;
+    heatingType?: string | null;
+    coolingType?: string | null;
+    hasPool?: boolean | null;
+    water?: "public" | "well" | "unknown";
+    sewer?: "public" | "septic" | "unknown";
+    waterSewerLabel?: string | null;
+    styleMatch?: boolean;
   }>;
 };
 

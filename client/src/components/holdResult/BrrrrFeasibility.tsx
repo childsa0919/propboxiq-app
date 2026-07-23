@@ -48,7 +48,7 @@ function verdictText(b: BrrrrResult): string {
 
 function arvLine(b: BrrrrResult): string {
   if (b.arvSource.kind === "comps") {
-    return `ARV ${fmtUSD(b.arv)} · from ${b.arvSource.compCount} comps at ${fmtUSD(b.arvSource.medianPpsf)}/sqft`;
+    return `ARV ${fmtUSD(b.arv)} · from ${b.arvSource.compCount} comps at ${fmtUSD(b.arvSource.anchorPpsf)}/sqft`;
   }
   return `ARV ${fmtUSD(b.arv)} · estimated +10%`;
 }
