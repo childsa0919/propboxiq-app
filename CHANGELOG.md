@@ -3,6 +3,17 @@
 All notable changes to PropBoxIQ are documented here. This project follows
 [semantic versioning](https://semver.org/).
 
+## [1.7.0] — 2026-07-22
+### Added
+- Refresh Deal: re-run comps, subject enrichment, rent AVM, site intelligence, and Flip/Hold/BRRRR scores on demand, freezing a full point-in-time snapshot
+- Snapshot History card: latest snapshots with per-refresh ARV / rent deltas; the original snapshot is backfilled from stored state on first view
+- Compare view (`/deal/:id/compare`): pick any two snapshots and see green/red deltas across Deal Metrics, Comps, Site Intelligence, and Budget, plus an improved/regressed/unchanged trend summary
+- Metric hero delta pill showing projected-profit change vs. the last snapshot
+
+### Changed
+- Deals never auto-refresh on open — every refresh is an explicit action that burns fresh comp data
+- Snapshots are capped at 20 per deal; the oldest non-original snapshot is auto-pruned and the original is never deleted
+
 ## [1.6.1] — 2026-07-22
 ### Added
 - Walkthrough Budget: itemize rehab across 7 categories with 29 default line items
