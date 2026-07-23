@@ -7,6 +7,9 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
 
+export type WaterKind = "public" | "well" | "unknown";
+export type SewerKind = "public" | "septic" | "unknown";
+
 export type SaleComp = {
   id: string;
   address: string;
@@ -17,12 +20,39 @@ export type SaleComp = {
   distance: number;
   daysOld: number;
   pricePerSqft: number | null;
+  // Enrichment (item 4/6) — best-effort; null when unavailable.
+  style?: string | null;
+  heatingType?: string | null;
+  coolingType?: string | null;
+  hasPool?: boolean | null;
+  water?: WaterKind;
+  sewer?: SewerKind;
+  waterSewerLabel?: string | null;
+  styleMatch?: boolean;
+};
+
+export type SaleCompsSubject = {
+  address: string;
+  sqft: number | null;
+  style?: string | null;
+  heatingType?: string | null;
+  coolingType?: string | null;
+  hasPool?: boolean | null;
+  water?: WaterKind;
+  sewer?: SewerKind;
+  waterSewerLabel?: string | null;
 };
 
 export type SaleCompsResponse = {
-  subject: { address: string; sqft: number | null };
+  subject: SaleCompsSubject;
   arv: number;
+  arvLow?: number;
+  arvHigh?: number;
   medianPricePerSqft: number | null;
+  arvBasis?: "style-matched" | "top-price";
+  styleMatchCount?: number;
+  arvAnchorPpsf?: number | null;
+  arvTopCompIds?: string[];
   compCount: number;
   radiusMiles: number | null;
   comps: SaleComp[];

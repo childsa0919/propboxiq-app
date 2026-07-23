@@ -31,6 +31,10 @@ import {
   RentCastRateLimitError,
   RentCastUpstreamError,
 } from "./rentcast";
+import { enrichComp, enrichComps } from "./compEnrich";
+import { computeArvFromComps } from "@shared/arv";
+import { stylesMatch } from "@shared/propAttributes";
+import { MD_GIS_SCOPE } from "./siteGis";
 import {
   runWelcomeDrip,
   sendDripBatch,
@@ -540,10 +544,21 @@ export async function registerRoutes(
       lat: number | null;
       lon: number | null;
       saleStatus: string | null;
+      // Enrichment (item 4/5/6) — populated after the cascade selects the comp set.
+      style?: string | null;
+      heatingType?: string | null;
+      coolingType?: string | null;
+      hasPool?: boolean | null;
+      water?: "public" | "well" | "unknown";
+      sewer?: "public" | "septic" | "unknown";
+      waterSewerLabel?: string | null;
+      styleMatch?: boolean;
     };
 
     let subjectSqft: number | null = null;
     let subjectAddress: string | null = null;
+    let subjectLat: number | null = null;
+    let subjectLon: number | null = null;
     let usedRadius: number | null = null;
     let comps: Comp[] = [];
     let lastError: string | null = null;
@@ -567,6 +582,8 @@ export async function registerRoutes(
         const sp = data?.subjectProperty ?? {};
         subjectSqft = (sp.squareFootage as number | undefined) ?? subjectSqft;
         subjectAddress = (sp.formattedAddress as string | undefined) ?? subjectAddress;
+        subjectLat = (sp.latitude as number | undefined) ?? subjectLat;
+        subjectLon = (sp.longitude as number | undefined) ?? subjectLon;
 
         // Match window centers on post-rehab target sqft if provided, else subject sqft.
         const matchSqft = targetSqft ?? subjectSqft;
@@ -666,49 +683,72 @@ export async function registerRoutes(
       qualityMessage = `Search expanded to ${usedRadius} mi to find ${comps.length} comps. Closer comps weren't available.`;
     }
 
-    // ARV strategy: take the 4 highest comps by total sale price, average their $/sqft,
-    // multiply by post-rehab target sqft (or subject sqft if no target). This anchors
-    // ARV on the strongest finished-product comps in the area — a flipper expects to
-    // sell at the top of the comp range after a quality rehab.
     const mean = (arr: number[]) =>
       arr.length === 0 ? 0 : Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
 
-    // Top 4 by sale price (descending). If <4 comps, use whatever we have.
-    const topComps = [...comps]
-      .sort((a, b) => b.price - a.price)
-      .slice(0, 4);
+    // ----- Enrichment (item 4): house style, HVAC, pool + MD GIS water/sewer -----
+    // Fetch per-comp attributes plus the subject's, all best-effort in parallel.
+    const [subjectEnrich, compEnrichments] = await Promise.all([
+      enrichComp({ address: subjectAddress ?? address, lat: subjectLat, lon: subjectLon }),
+      enrichComps(comps.map((c) => ({ address: c.address, lat: c.lat, lon: c.lon }))),
+    ]);
+    const subjectStyle = subjectEnrich.style;
+    comps = comps.map((c, i) => {
+      const e = compEnrichments[i];
+      return {
+        ...c,
+        style: e.style,
+        heatingType: e.heatingType,
+        coolingType: e.coolingType,
+        hasPool: e.hasPool,
+        water: e.water,
+        sewer: e.sewer,
+        waterSewerLabel: e.waterSewerLabel,
+        styleMatch: stylesMatch(subjectStyle, e.style),
+      };
+    });
 
-    const topPpsfList = topComps
-      .map((c) => c.pricePerSqft)
-      .filter((n): n is number => n != null);
-    const meanTopPpsf = mean(topPpsfList);
-    const meanTopPrice = mean(topComps.map((c) => c.price));
+    // ----- Style-priority ranking (item 5) -----
+    // If ≥6 comps match the subject's house style, ARV is driven by the top-4 of
+    // those style-matched comps; otherwise fall back to top-4 by price across all.
+    const STYLE_MATCH_MIN = 6;
+    const styleMatchCount = comps.filter((c) => c.styleMatch).length;
+    const useStyleMatched = subjectStyle != null && styleMatchCount >= STYLE_MATCH_MIN;
+    const rankingPool = useStyleMatched ? comps.filter((c) => c.styleMatch) : comps;
+    const arvBasis: "style-matched" | "top-price" = useStyleMatched
+      ? "style-matched"
+      : "top-price";
+
+    // ----- Unified ARV (item 3): shared top-4-by-price × mean $/sqft formula -----
+    // Band always uses the TOTAL comp count, not the (possibly narrowed) pool.
+    const arvSqft = targetSqft ?? subjectSqft;
+    const arvResult = computeArvFromComps(
+      rankingPool.map((c) => ({ id: c.id, price: c.price, pricePerSqft: c.pricePerSqft })),
+      arvSqft,
+      comps.length,
+    );
+    const { arv, arvLow, arvHigh } = arvResult;
+    console.log(
+      `[comps] ARV ${arv} (basis=${arvBasis}, pool=${rankingPool.length}, ` +
+        `anchor=${arvResult.anchorPpsf ?? "n/a"}/sqft, band=±${Math.round(arvResult.band * 100)}%)`,
+    );
 
     // Reference numbers for the response (across ALL comps, for context)
     const medianPpsf = mean(
       comps.map((c) => c.pricePerSqft).filter((n): n is number => n != null)
     );
 
-    // ARV multiplies mean(top-4 $/sqft) by the post-rehab target sqft when provided
-    // (the buyer is buying the finished house, not the as-is footprint).
-    const arvSqft = targetSqft ?? subjectSqft;
-    let arv = 0;
-    if (arvSqft && meanTopPpsf) {
-      arv = Math.round(arvSqft * meanTopPpsf);
-    } else {
-      // Sqft missing on subject — fall back to mean of the top-4 sale prices directly
-      arv = meanTopPrice;
-    }
-
-    // Confidence band — ±10% if we have <6 comps, ±7% otherwise
-    const band = comps.length >= 6 ? 0.07 : 0.1;
-    const arvLow = Math.round(arv * (1 - band));
-    const arvHigh = Math.round(arv * (1 + band));
-
     res.json({
       subject: {
         address: subjectAddress ?? address,
         sqft: subjectSqft,
+        style: subjectEnrich.style,
+        heatingType: subjectEnrich.heatingType,
+        coolingType: subjectEnrich.coolingType,
+        hasPool: subjectEnrich.hasPool,
+        water: subjectEnrich.water,
+        sewer: subjectEnrich.sewer,
+        waterSewerLabel: subjectEnrich.waterSewerLabel,
       },
       target: {
         sqft: targetSqft,
@@ -721,8 +761,10 @@ export async function registerRoutes(
       medianPricePerSqft: medianPpsf || null,
       // ARV math transparency — surface the top-4 used and the $/sqft anchor
       arvMethod: "top4-by-price-mean-ppsf",
-      arvAnchorPpsf: meanTopPpsf || null,
-      arvTopCompIds: topComps.map((c) => c.id),
+      arvBasis,
+      styleMatchCount,
+      arvAnchorPpsf: arvResult.anchorPpsf,
+      arvTopCompIds: arvResult.topCompIds,
       compCount: comps.length,
       radiusMiles: usedRadius,
       filters: {
@@ -1480,8 +1522,13 @@ export async function registerRoutes(
     const hsJurs = hs?.features?.[0]?.attributes?.JURSCODE as string | undefined;
     const sewerJurs = sewer?.features?.[0]?.attributes?.JURSCODE as string | undefined;
     const jurs = hsJurs || sewerJurs;
-    // MD JURSCODE (MDP layers use 4-letter codes): ANNE = Anne Arundel, CALV = Calvert
+    // MD JURSCODE (MDP layers use 4-letter codes). Critical Area data itself only
+    // covers Anne Arundel + Calvert (the MD_CriticalAreas service). Water/sewer
+    // (well/septic) coverage is broader — v1.6.0 recognizes AACO, Calvert, Prince
+    // George's, Montgomery, Howard, and Charles (see MD_GIS_SCOPE).
     const inCriticalAreaScope = jurs === "ANNE" || jurs === "CALV";
+    const inWaterSewerScope = jurs != null && jurs in MD_GIS_SCOPE;
+    const scopeCounty = jurs ? MD_GIS_SCOPE[jurs] ?? null : null;
     let criticalArea: any;
     if (ca?.error) {
       criticalArea = { state: "unknown", label: "Lookup failed", meta: ca.error };
@@ -1588,6 +1635,11 @@ export async function registerRoutes(
       highSchool,
       water: waterPanel,
       sewer: sewerPanel,
+      coverage: {
+        county: scopeCounty,
+        inWaterSewerScope,
+        counties: Object.values(MD_GIS_SCOPE),
+      },
     });
   });
 

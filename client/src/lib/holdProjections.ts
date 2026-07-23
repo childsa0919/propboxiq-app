@@ -10,6 +10,7 @@ import {
   type HoldInputs,
   type HoldResults,
 } from "@/lib/holdCalc";
+import { computeArvFromComps } from "@shared/arv";
 
 const pct = (n: number) => (n || 0) / 100;
 
@@ -257,38 +258,31 @@ export interface BrrrrResult {
 export const BRRRR_REFI_LTV = 0.75;
 // Flat post-rehab uplift used only when comp data is unavailable.
 export const BRRRR_ARV_UPLIFT = 1.1; // ARV = purchase × 1.1
-// Small uplift applied to the comp-derived median value to reflect post-rehab
-// condition vs. the raw (mixed-condition) comp median.
-export const BRRRR_COMP_UPLIFT = 1.05;
 // Minimum usable comps before we trust a comp-derived ARV over the flat uplift.
 export const BRRRR_MIN_COMPS = 3;
 export const BRRRR_CLOSING_PCT = 0.05; // closing ≈ 5% of purchase
 
-/** Minimal sale-comp shape needed to derive ARV from $/sqft. */
+/** Minimal sale-comp shape needed to derive ARV via the unified formula. */
 export interface SaleComp {
+  id?: string;
+  price: number;
   pricePerSqft: number | null;
 }
 
 /** How the ARV in a BrrrrResult was derived. */
 export type ArvSource =
-  | { kind: "comps"; compCount: number; medianPpsf: number }
+  | { kind: "comps"; compCount: number; anchorPpsf: number }
   | { kind: "estimate" };
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[mid - 1] + sorted[mid]) / 2
-    : sorted[mid];
-}
 
 /**
  * BRRRR (Buy, Rehab, Rent, Refinance) capital-recycling feasibility.
  *   totalCost      = purchase + rehab + closing (5% of purchase)
- *   ARV            = comp-derived (subject sqft × median comp $/sqft × 1.05)
- *                    when ≥3 comps with $/sqft are supplied AND subject sqft is
- *                    known; otherwise purchase × 1.1 (flat fallback)
+ *   ARV            = the UNIFIED comp ARV (same top-4-by-price × mean $/sqft math
+ *                    as the Flip result — see shared/arv.ts). When the server has
+ *                    already computed it (`opts.arv`), we use that exact value so
+ *                    BRRRR and Flip can never disagree. Otherwise we recompute it
+ *                    locally from the comp list via the same shared function.
+ *                    Falls back to purchase × 1.1 when no comps are available.
  *   refiLoan       = ARV × 0.75
  *   currentLoan    = original purchase loan (purchase × (1 − downPct))
  *   cashOut        = refiLoan − currentLoan
@@ -299,27 +293,42 @@ function median(values: number[]): number {
  */
 export function computeBrrrr(
   input: HoldInputs,
-  opts?: { comps?: SaleComp[]; subjectSqft?: number | null },
+  opts?: {
+    comps?: SaleComp[];
+    subjectSqft?: number | null;
+    /** Server-computed unified ARV (from /api/comps). Preferred when present. */
+    arv?: number | null;
+    anchorPpsf?: number | null;
+  },
 ): BrrrrResult {
   const purchase = input.purchasePrice;
   const rehab = input.rehab;
   const closing = purchase * BRRRR_CLOSING_PCT;
   const totalCost = purchase + rehab + closing;
 
-  // ARV: prefer comp-derived value when we have enough comps + a subject sqft.
-  const ppsfList = (opts?.comps ?? [])
-    .map((c) => c.pricePerSqft)
-    .filter((n): n is number => n != null && Number.isFinite(n) && n > 0);
+  const comps = opts?.comps ?? [];
+  const usablePpsf = comps.filter(
+    (c) => c.pricePerSqft != null && Number.isFinite(c.pricePerSqft) && c.pricePerSqft > 0,
+  );
   const subjectSqft = opts?.subjectSqft ?? null;
   let arv: number;
   let arvSource: ArvSource;
-  if (ppsfList.length >= BRRRR_MIN_COMPS && subjectSqft && subjectSqft > 0) {
-    const medianPpsf = median(ppsfList);
-    arv = subjectSqft * medianPpsf * BRRRR_COMP_UPLIFT;
+  if (opts?.arv != null && opts.arv > 0) {
+    // Use the exact ARV the Flip result computed on the server.
+    arv = opts.arv;
     arvSource = {
       kind: "comps",
-      compCount: ppsfList.length,
-      medianPpsf: Math.round(medianPpsf),
+      compCount: comps.length,
+      anchorPpsf: Math.round(opts.anchorPpsf ?? 0),
+    };
+  } else if (usablePpsf.length >= BRRRR_MIN_COMPS && subjectSqft && subjectSqft > 0) {
+    // Recompute locally with the SAME shared formula the server uses.
+    const r = computeArvFromComps(comps, subjectSqft, comps.length);
+    arv = r.arv;
+    arvSource = {
+      kind: "comps",
+      compCount: usablePpsf.length,
+      anchorPpsf: Math.round(r.anchorPpsf ?? 0),
     };
   } else {
     arv = purchase * BRRRR_ARV_UPLIFT;

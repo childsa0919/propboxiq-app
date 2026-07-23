@@ -17,6 +17,7 @@ import HoldResult from "@/pages/HoldResult";
 import Detailed from "@/pages/Detailed";
 import DealPage from "@/pages/Deal";
 import Deals from "@/pages/Deals";
+import Settings from "@/pages/Settings";
 import Login from "@/pages/Login";
 import { Loader2 } from "lucide-react";
 
@@ -31,6 +32,7 @@ function AppRouter() {
       <Route path="/detailed" component={Detailed} />
       <Route path="/deal/:id" component={DealPage} />
       <Route path="/deals" component={Deals} />
+      <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
     </Switch>
   );

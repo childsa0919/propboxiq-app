@@ -40,6 +40,12 @@ import {
   Pencil,
   Mail,
 } from "lucide-react";
+import {
+  stylesMatch,
+  combinedHvacLabel,
+  hvacMatch,
+  normalizeStyle,
+} from "@shared/propAttributes";
 import { exportDealPdf, exportDealPdfBlob } from "@/lib/exportPdf";
 import { EmailPdfDialog } from "@/components/EmailPdfDialog";
 import { DealCard } from "@/components/DealCard";
@@ -572,6 +578,14 @@ type SavedComp = {
   pricePerSqft: number | null;
   lat?: number | null;
   lon?: number | null;
+  style?: string | null;
+  heatingType?: string | null;
+  coolingType?: string | null;
+  hasPool?: boolean | null;
+  water?: "public" | "well" | "unknown";
+  sewer?: "public" | "septic" | "unknown";
+  waterSewerLabel?: string | null;
+  styleMatch?: boolean;
 };
 
 type SavedCompsData = {
@@ -580,11 +594,23 @@ type SavedCompsData = {
   arvHigh: number;
   medianPricePerSqft: number | null;
   arvMethod?: string;
+  arvBasis?: "style-matched" | "top-price";
+  styleMatchCount?: number;
   arvAnchorPpsf?: number | null;
   arvTopCompIds?: string[];
   compCount: number;
   radiusMiles: number | null;
-  subject: { address: string; sqft: number | null };
+  subject: {
+    address: string;
+    sqft: number | null;
+    style?: string | null;
+    heatingType?: string | null;
+    coolingType?: string | null;
+    hasPool?: boolean | null;
+    water?: "public" | "well" | "unknown";
+    sewer?: "public" | "septic" | "unknown";
+    waterSewerLabel?: string | null;
+  };
   target?: {
     sqft: number | null;
     beds: number | null;
@@ -849,6 +875,15 @@ function CompsSection({
           />
         </div>
 
+        {/* ARV basis note (item 5): style-matched vs top-by-price */}
+        {!isOverridden && (
+          <p className="mb-3 text-[11px] font-medium text-muted-foreground">
+            {data.arvBasis === "style-matched" && data.styleMatchCount
+              ? `Based on ${data.styleMatchCount} style-matched comps`
+              : "Based on top comps by price"}
+          </p>
+        )}
+
         {/* Override banner */}
         {isOverridden && (
           <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 flex items-center justify-between gap-3">
@@ -926,6 +961,9 @@ function CompsSection({
                     {" · "}
                     {c.daysOld <= 1 ? "today" : `${c.daysOld}d ago`}
                   </p>
+                  {!isExcluded && (
+                    <CompHeroBadges comp={c} subject={data.subject} />
+                  )}
                 </div>
                 <div className="text-right shrink-0">
                   <p
@@ -1092,6 +1130,110 @@ function CompStat({
       >
         {value}
       </p>
+    </div>
+  );
+}
+
+// Comp hero badges (item 6): four pills comparing a comp to the subject —
+// house style, water/sewer, HVAC, and pool. Green = matches subject,
+// red = differs, gray = unknown (either side missing). Coastal Teal palette.
+type BadgeTone = "match" | "differ" | "unknown";
+
+function badgeStyle(tone: BadgeTone): React.CSSProperties {
+  switch (tone) {
+    case "match":
+      return {
+        background: "rgba(74,222,128,0.14)",
+        borderColor: "rgba(74,222,128,0.4)",
+        color: "#4ade80",
+      };
+    case "differ":
+      return {
+        background: "rgba(248,113,113,0.14)",
+        borderColor: "rgba(248,113,113,0.4)",
+        color: "#f87171",
+      };
+    default:
+      return {
+        background: "rgba(230,238,242,0.06)",
+        borderColor: "rgba(230,238,242,0.18)",
+        color: "rgba(230,238,242,0.6)",
+      };
+  }
+}
+
+function HeroBadge({ tone, label }: { tone: BadgeTone; label: string }) {
+  return (
+    <span
+      className="inline-flex h-[24px] items-center rounded-full border px-2.5 text-[10px] font-semibold leading-none whitespace-nowrap"
+      style={badgeStyle(tone)}
+    >
+      {label}
+    </span>
+  );
+}
+
+function CompHeroBadges({
+  comp,
+  subject,
+}: {
+  comp: SavedComp;
+  subject: SavedCompsData["subject"];
+}) {
+  // Style
+  const style = normalizeStyle(comp.style ?? null);
+  const styleTone: BadgeTone = !style
+    ? "unknown"
+    : stylesMatch(subject.style ?? null, comp.style ?? null)
+      ? "match"
+      : "differ";
+  const styleLabel = style
+    ? style.replace(/\b\w/g, (m) => m.toUpperCase())
+    : "Style —";
+
+  // Water/Sewer (combined)
+  const wsLabel = comp.waterSewerLabel ?? null;
+  const wsTone: BadgeTone = !wsLabel
+    ? "unknown"
+    : subject.waterSewerLabel && subject.waterSewerLabel === wsLabel
+      ? "match"
+      : subject.waterSewerLabel
+        ? "differ"
+        : "unknown";
+
+  // HVAC (combined)
+  const hvac = combinedHvacLabel(comp.heatingType, comp.coolingType);
+  const hvacTone: BadgeTone = !hvac
+    ? "unknown"
+    : subject.heatingType || subject.coolingType
+      ? hvacMatch(
+          subject.heatingType,
+          subject.coolingType,
+          comp.heatingType,
+          comp.coolingType,
+        )
+        ? "match"
+        : "differ"
+      : "unknown";
+
+  // Pool
+  const poolTone: BadgeTone =
+    comp.hasPool == null
+      ? "unknown"
+      : subject.hasPool == null
+        ? "unknown"
+        : comp.hasPool === subject.hasPool
+          ? "match"
+          : "differ";
+  const poolLabel =
+    comp.hasPool == null ? "Pool —" : comp.hasPool ? "Pool" : "No pool";
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <HeroBadge tone={styleTone} label={styleLabel} />
+      <HeroBadge tone={wsTone} label={wsLabel ?? "Water/Sewer —"} />
+      <HeroBadge tone={hvacTone} label={hvac ?? "HVAC —"} />
+      <HeroBadge tone={poolTone} label={poolLabel} />
     </div>
   );
 }
@@ -1552,25 +1694,22 @@ function WhatIf({
       <Slider
         label="Purchase price"
         value={local.purchasePrice}
-        min={Math.max(0, Math.floor(inputs.purchasePrice * 0.6))}
-        max={Math.ceil(Math.max(inputs.purchasePrice * 1.4, 1))}
-        step={1000}
+        baseline={inputs.purchasePrice}
+        kind="money"
         onChange={(v) => update("purchasePrice", v)}
       />
       <Slider
         label="Rehab budget"
         value={local.rehabBudget}
-        min={0}
-        max={Math.ceil(Math.max(inputs.rehabBudget * 1.5, 1))}
-        step={1000}
+        baseline={inputs.rehabBudget}
+        kind="money"
         onChange={(v) => update("rehabBudget", v)}
       />
       <Slider
         label="ARV"
         value={local.arv}
-        min={Math.max(0, Math.floor(inputs.arv * 0.7))}
-        max={Math.ceil(Math.max(inputs.arv * 1.3, 1))}
-        step={1000}
+        baseline={inputs.arv}
+        kind="money"
         onChange={(v) => update("arv", v)}
       />
       <div className="pt-3 border-t border-card-border flex items-baseline justify-between">
@@ -1590,37 +1729,121 @@ function WhatIf({
   );
 }
 
+// What-If row slider (item 1). Wraps a native <input type="range"> — the shared
+// shadcn/Radix Slider primitive is intentionally NOT used here so we can add a
+// tap-to-edit value, spec-driven range, clamping and snapping without touching
+// the shared component. Native range already gives us arrow-key nudging and
+// correct aria-valuemin/max/now; we add aria-label + tap-to-edit.
+function snap(v: number, step: number, mode: "round" | "floor" | "ceil"): number {
+  return Math[mode](v / step) * step;
+}
+
 function Slider({
   label,
   value,
-  min,
-  max,
-  step,
+  baseline,
+  kind,
   onChange,
+  minFloor = 0,
+  maxCeil,
 }: {
   label: string;
   value: number;
-  min: number;
-  max: number;
-  step: number;
+  /** Committed value that anchors the ±50% range (never the dragged value). */
+  baseline: number;
+  kind: "money" | "percent";
   onChange: (v: number) => void;
+  minFloor?: number;
+  maxCeil?: number;
 }) {
+  const step = kind === "money" ? 500 : 0.25;
+
+  // Range = round(baseline*0.5) snapped down / round(baseline*1.5) snapped up,
+  // then clamped to any hard floor/ceiling (rate ≥ 0%, LTV ≤ 100%).
+  let min = snap(Math.round(baseline * 0.5), step, "floor");
+  let max = snap(Math.round(baseline * 1.5), step, "ceil");
+  if (minFloor != null) min = Math.max(min, minFloor);
+  if (maxCeil != null) max = Math.min(max, maxCeil);
+  // A zero/degenerate baseline yields min==max — widen so the track is usable.
+  if (max <= min) max = min + step * 20;
+
+  const clampSnap = (v: number) =>
+    Math.min(max, Math.max(min, snap(v, step, "round")));
+
+  const fmt = (v: number) =>
+    kind === "money"
+      ? fmtUSD(v)
+      : `${Number.isInteger(v) ? v : v.toFixed(2).replace(/\.?0+$/, "")}%`;
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const beginEdit = () => {
+    setDraft(String(value));
+    setEditing(true);
+  };
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const commit = () => {
+    // Strip $, %, commas and whitespace before parsing.
+    const cleaned = draft.replace(/[$%,\s]/g, "");
+    const parsed = parseFloat(cleaned);
+    if (!Number.isFinite(parsed)) {
+      setEditing(false); // invalid → revert
+      return;
+    }
+    onChange(clampSnap(parsed));
+    setEditing(false);
+  };
+
   return (
     <div>
       <div className="flex items-baseline justify-between mb-1.5">
         <label className="text-xs font-medium text-muted-foreground">
           {label}
         </label>
-        <span className="text-sm font-medium tabular-nums">{fmtUSD(value)}</span>
+        {editing ? (
+          <input
+            ref={inputRef}
+            inputMode="decimal"
+            defaultValue={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit();
+              else if (e.key === "Escape") setEditing(false);
+            }}
+            className="w-24 rounded-md border border-card-border bg-card/60 px-2 py-0.5 text-right text-sm font-medium tabular-nums outline-none focus:border-accent"
+            data-testid={`input-whatif-${label}`}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={beginEdit}
+            className="inline-flex min-h-[44px] items-center rounded-md px-2 -mr-2 text-sm font-medium tabular-nums hover:bg-muted/40"
+            aria-label={`Edit ${label} value`}
+            data-testid={`button-whatif-${label}`}
+          >
+            {fmt(value)}
+          </button>
+        )}
       </div>
       <input
         type="range"
         min={min}
         max={max}
         step={step}
-        value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-        className="w-full accent-[hsl(var(--accent))]"
+        value={clampSnap(value)}
+        onChange={(e) => onChange(clampSnap(parseFloat(e.target.value)))}
+        aria-label={label}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuenow={value}
+        className="w-full h-11 accent-[hsl(var(--accent))] cursor-pointer"
       />
     </div>
   );
