@@ -22,6 +22,7 @@ import { MapPreview } from "@/components/MapPreview";
 import { useToast } from "@/hooks/use-toast";
 import { exportDealPdf, exportDealPdfBlob } from "@/lib/exportPdf";
 import { EmailPdfDialog } from "@/components/EmailPdfDialog";
+import { WalkthroughBudget } from "@/components/WalkthroughBudget";
 import { MarketStatsPanel } from "@/components/MarketStatsPanel";
 import {
   ArrowLeft,
@@ -33,6 +34,7 @@ import {
   Sliders,
   Building,
   Mail,
+  ClipboardList,
 } from "lucide-react";
 
 export default function DealPage() {
@@ -56,6 +58,7 @@ export default function DealPage() {
   }>({});
   const [dirty, setDirty] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
+  const [budgetOpen, setBudgetOpen] = useState(false);
 
   // Hydrate from server
   useEffect(() => {
@@ -335,6 +338,16 @@ export default function DealPage() {
                     hint="Taxes, insurance, utilities"
                     testId="input-monthly-holding"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setBudgetOpen(true)}
+                    className="sm:col-span-2 flex items-center justify-center gap-2 py-3 font-semibold transition-opacity hover:opacity-90"
+                    style={{ backgroundColor: "#f5c948", color: "#0a0e12", borderRadius: 12 }}
+                    data-testid="button-walkthrough-budget"
+                  >
+                    <ClipboardList className="h-4 w-4" />
+                    Walkthrough Budget
+                  </button>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -508,6 +521,16 @@ export default function DealPage() {
           <ResultsPanel inputs={inputs} />
         </div>
       </div>
+
+      <WalkthroughBudget
+        deal={deal}
+        open={budgetOpen}
+        onOpenChange={setBudgetOpen}
+        onApply={(total) => {
+          update({ rehabBudget: total });
+          toast({ title: `Budget applied · ${fmtUSD(total)}` });
+        }}
+      />
 
       <EmailPdfDialog
         open={emailOpen}

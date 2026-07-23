@@ -39,6 +39,7 @@ import {
   EyeOff,
   Pencil,
   Mail,
+  ClipboardList,
 } from "lucide-react";
 import {
   stylesMatch,
@@ -48,7 +49,9 @@ import {
 } from "@shared/propAttributes";
 import { exportDealPdf, exportDealPdfBlob } from "@/lib/exportPdf";
 import { EmailPdfDialog } from "@/components/EmailPdfDialog";
+import { WalkthroughBudget } from "@/components/WalkthroughBudget";
 import { DealCard } from "@/components/DealCard";
+import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect, useRef } from "react";
 import CountUp from "react-countup";
 
@@ -99,6 +102,8 @@ export default function QuickResult() {
   });
 
   const [emailOpen, setEmailOpen] = useState(false);
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const { toast } = useToast();
 
   if (isLoading || !deal) {
     return (
@@ -438,6 +443,18 @@ export default function QuickResult() {
         />
       </div>
 
+      {/* Walkthrough Budget — itemize rehab across 7 categories, save per deal */}
+      <button
+        type="button"
+        onClick={() => setBudgetOpen(true)}
+        className="w-full mb-8 flex items-center justify-center gap-2 py-3.5 font-semibold transition-opacity hover:opacity-90"
+        style={{ backgroundColor: "#f5c948", color: "#0a0e12", borderRadius: 12 }}
+        data-testid="button-walkthrough-budget"
+      >
+        <ClipboardList className="h-4 w-4" />
+        Walkthrough Budget
+      </button>
+
       {/* Site Intelligence — 4 GIS panels (Critical Area, High School, Water, Sewer) */}
       <SiteIntelligence lat={deal.lat ?? null} lon={deal.lon ?? null} />
 
@@ -523,6 +540,16 @@ export default function QuickResult() {
           Email
         </Button>
       </div>
+
+      <WalkthroughBudget
+        deal={deal}
+        open={budgetOpen}
+        onOpenChange={setBudgetOpen}
+        onApply={(total) => {
+          updateDeal.mutate({ inputs: { ...inputs, rehabBudget: total } });
+          toast({ title: `Budget applied · ${fmtUSD(total)}` });
+        }}
+      />
 
       <EmailPdfDialog
         open={emailOpen}

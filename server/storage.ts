@@ -75,6 +75,7 @@ sqlite.exec(`
     inputs TEXT NOT NULL,
     notes TEXT,
     name TEXT,
+    budget TEXT,
     pinned INTEGER DEFAULT 0,
     archived INTEGER DEFAULT 0,
     last_opened_at INTEGER,
@@ -101,6 +102,8 @@ for (const [col, ddl] of [
   ["pinned", "ALTER TABLE deals ADD COLUMN pinned INTEGER DEFAULT 0;"],
   ["archived", "ALTER TABLE deals ADD COLUMN archived INTEGER DEFAULT 0;"],
   ["last_opened_at", "ALTER TABLE deals ADD COLUMN last_opened_at INTEGER;"],
+  // v1.6.1: Walkthrough Budget line items (JSON).
+  ["budget", "ALTER TABLE deals ADD COLUMN budget TEXT;"],
 ] as const) {
   try {
     const cols = sqlite.prepare("PRAGMA table_info(deals)").all() as Array<{ name: string }>;

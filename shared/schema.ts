@@ -76,6 +76,9 @@ export const deals = sqliteTable("deals", {
   notes: text("notes"),
   // User-editable nickname. Falls back to address when null/empty.
   name: text("name"),
+  // Walkthrough Budget line items (JSON DealBudget). Null until the user opens
+  // the budget sheet for this deal; falls back to the default template.
+  budget: text("budget"),
   // User flags for organizing the deal list
   pinned: integer("pinned", { mode: "boolean" }).default(false),
   archived: integer("archived", { mode: "boolean" }).default(false),

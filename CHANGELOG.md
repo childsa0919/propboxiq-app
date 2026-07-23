@@ -3,6 +3,13 @@
 All notable changes to PropBoxIQ are documented here. This project follows
 [semantic versioning](https://semver.org/).
 
+## [1.6.1] — 2026-07-22
+### Added
+- Walkthrough Budget: itemize rehab across 7 categories with 29 default line items
+- Add custom line items to any category
+- Save budget per deal, restore on reopen
+- Export categorized Budget PDF for contractor bidding
+
 ## [1.6.0] — 2026-07-22
 ### Added
 - What-If sliders: tap the value to type an exact number
