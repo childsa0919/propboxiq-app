@@ -6,6 +6,7 @@ import {
   BUDGET_CATEGORIES,
   categorySubtotal,
   budgetGrandTotal,
+  createDefaultBudget,
   type DealBudget,
   type BudgetLineItem,
 } from "@shared/budgetTemplate";
@@ -28,11 +29,29 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   /** Called with the grand total when the user taps "Apply to Deal". */
   onApply: (total: number) => void;
+  /**
+   * In-memory (wizard) mode. When `onBudgetChange` is provided the modal reads
+   * from `budgetOverride` and writes edits back through the callback instead of
+   * loading/saving by deal id — used on the Flip/Hold wizard rehab steps where
+   * the deal doesn't exist yet. Falls back to the default template on first open.
+   */
+  budgetOverride?: DealBudget | null;
+  onBudgetChange?: (budget: DealBudget) => void;
 }
 
-export function WalkthroughBudget({ deal, open, onOpenChange, onApply }: Props) {
+export function WalkthroughBudget({
+  deal,
+  open,
+  onOpenChange,
+  onApply,
+  budgetOverride,
+  onBudgetChange,
+}: Props) {
   const dealId = deal.id;
-  const { budget, save } = useDealBudget(dealId);
+  const controlled = onBudgetChange !== undefined;
+  const hook = useDealBudget(dealId);
+  const budget = controlled ? budgetOverride ?? createDefaultBudget() : hook.budget;
+  const save = controlled ? onBudgetChange! : hook.save;
 
   const [local, setLocal] = useState<DealBudget | null>(null);
   const [openCats, setOpenCats] = useState<Set<string>>(new Set());

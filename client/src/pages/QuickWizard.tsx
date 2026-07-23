@@ -18,6 +18,8 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { haptic } from "@/lib/native";
 import { defaultDealInputs, type Deal } from "@shared/schema";
+import { WalkthroughBudget } from "@/components/WalkthroughBudget";
+import { budgetGrandTotal, type DealBudget } from "@shared/budgetTemplate";
 
 export const HOLDING_PERIOD_OPTIONS = [3, 6, 9, 12, 18, 24] as const;
 export const DEFAULT_HOLDING_MONTHS = 6;
@@ -30,6 +32,7 @@ import {
   Sparkles,
   RefreshCw,
   Home,
+  ClipboardList,
 } from "lucide-react";
 import { fmtUSD } from "@/lib/calc";
 
@@ -117,6 +120,12 @@ export default function QuickWizard() {
   const [purchase, setPurchase] = useState<string>("");
   const [rehab, setRehab] = useState<string>("");
   const [arv, setArv] = useState<string>("");
+
+  // Walkthrough Budget (in-memory until the deal is created). Opened from the
+  // rehab step; "Apply to Deal" fills the rehab input with the grand total and
+  // the line-item breakdown is persisted to deal_budgets once the deal exists.
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const [walkBudget, setWalkBudget] = useState<DealBudget | null>(null);
 
   // Post-rehab spec changes (sqft / beds / baths). Off by default.
   const [changingSpecs, setChangingSpecs] = useState(false);
@@ -329,7 +338,17 @@ export default function QuickWizard() {
         notes: notesPayload,
       };
       const res = await apiRequest("POST", "/api/deals", body);
-      return res.json() as Promise<Deal>;
+      const deal = (await res.json()) as Deal;
+      // Persist the walkthrough line-item breakdown to the new deal so it carries
+      // through to the result page (the rehab total is already on inputs above).
+      if (walkBudget && budgetGrandTotal(walkBudget) > 0) {
+        try {
+          await apiRequest("PUT", `/api/deals/${deal.id}/budget`, walkBudget);
+        } catch {
+          // Non-fatal: the rehab total is saved on the deal regardless.
+        }
+      }
+      return deal;
     },
     onSuccess: (deal) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
@@ -481,6 +500,7 @@ export default function QuickWizard() {
               <StepRehab
                 rehab={rehab}
                 onRehabChange={setRehab}
+                onOpenBudget={() => setBudgetOpen(true)}
                 holdingMonths={holdingMonths}
                 onHoldingMonthsChange={setHoldingMonths}
                 isCashPurchase={isCashPurchase}
@@ -607,6 +627,23 @@ export default function QuickWizard() {
         </div>
       </div>
       )}
+
+      {/* Walkthrough Budget — in-memory on the wizard; applies its grand total to
+          the rehab input and persists the breakdown once the deal is created. */}
+      <WalkthroughBudget
+        deal={
+          {
+            id: NaN,
+            name: null,
+            address: address?.matchedAddress ?? "New deal",
+          } as unknown as Deal
+        }
+        open={budgetOpen}
+        onOpenChange={setBudgetOpen}
+        budgetOverride={walkBudget}
+        onBudgetChange={setWalkBudget}
+        onApply={(total) => setRehab(String(Math.round(total)))}
+      />
     </div>
   );
 }
@@ -1048,6 +1085,7 @@ function parseNumber(s: string): number {
 function StepRehab({
   rehab,
   onRehabChange,
+  onOpenBudget,
   holdingMonths,
   onHoldingMonthsChange,
   isCashPurchase,
@@ -1066,6 +1104,7 @@ function StepRehab({
 }: {
   rehab: string;
   onRehabChange: (v: string) => void;
+  onOpenBudget: () => void;
   holdingMonths: number;
   onHoldingMonthsChange: (v: number) => void;
   isCashPurchase: boolean;
@@ -1125,6 +1164,19 @@ function StepRehab({
           {fmtUSD(numericValue)}
         </p>
       )}
+
+      {/* Walkthrough Budget — itemize rehab across 7 categories; "Apply to Deal"
+          fills the input above with the grand total. */}
+      <button
+        type="button"
+        onClick={onOpenBudget}
+        className="w-full mt-6 flex items-center justify-center gap-2 py-3.5 font-semibold transition-opacity hover:opacity-90"
+        style={{ backgroundColor: "#f5c948", color: "#0a0e12", borderRadius: 12 }}
+        data-testid="button-walkthrough-budget"
+      >
+        <ClipboardList className="h-4 w-4" />
+        Walkthrough Budget
+      </button>
 
       {/* Holding period — drives ROI / annualized / financing math */}
       <div className="mt-7">

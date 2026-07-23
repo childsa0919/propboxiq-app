@@ -12,6 +12,14 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.7.1",
+    date: "2026-07-22",
+    fixed: [
+      "Walkthrough Budget button now available on the Flip and Hold wizard rehab steps (was previously only on the result page)",
+      "Walkthrough total flows into the wizard's rehab input, then persists to the deal when saved",
+    ],
+  },
+  {
     version: "1.7.0",
     date: "2026-07-22",
     added: [

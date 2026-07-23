@@ -3,6 +3,11 @@
 All notable changes to PropBoxIQ are documented here. This project follows
 [semantic versioning](https://semver.org/).
 
+## [1.7.1] — 2026-07-22
+### Fixed
+- Walkthrough Budget button now available on the Flip and Hold wizard rehab steps (was previously only on the result page)
+- Walkthrough total flows into the wizard's rehab input, then persists to the deal when saved
+
 ## [1.7.0] — 2026-07-22
 ### Added
 - Refresh Deal: re-run comps, subject enrichment, rent AVM, site intelligence, and Flip/Hold/BRRRR scores on demand, freezing a full point-in-time snapshot
