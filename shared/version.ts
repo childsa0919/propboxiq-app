@@ -1,7 +1,7 @@
 // Single source of truth for the app version. Kept in sync with the `version`
 // field in package.json. Imported by the client (Settings + footer) and anywhere
 // else that needs to display or compare the running app version.
-export const APP_VERSION = "1.6.1";
+export const APP_VERSION = "1.7.0";
 
 // Numeric semver compare. Returns <0 if a<b, 0 if equal, >0 if a>b. Tolerates
 // missing/partial versions (treats missing segments as 0) and ignores any

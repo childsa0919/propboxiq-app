@@ -98,6 +98,23 @@ export const insertDealSchema = createInsertSchema(deals).omit({
 export type InsertDeal = z.infer<typeof insertDealSchema>;
 export type Deal = typeof deals.$inferSelect;
 
+// Frozen point-in-time snapshots of a deal (v1.7.0 "Refresh Deal"). Each row is
+// a full re-run of comps + enrichment + scoring, stored as JSON in `payload`.
+// `isOriginal` marks the first (backfilled) snapshot, which can never be pruned
+// or manually deleted. `changeSummary` is the precomputed diff vs the previous
+// snapshot at capture time (JSON ChangeSummary).
+export const dealSnapshots = sqliteTable("deal_snapshots", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  dealId: integer("deal_id").notNull(),
+  isOriginal: integer("is_original", { mode: "boolean" }).notNull().default(false),
+  payload: text("payload").notNull(),
+  changeSummary: text("change_summary"),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type DealSnapshot = typeof dealSnapshots.$inferSelect;
+export type InsertDealSnapshot = typeof dealSnapshots.$inferInsert;
+
 // Zod schema for the runtime inputs object stored as JSON in `inputs`
 export const dealInputsSchema = z.object({
   purchasePrice: z.number().nonnegative(),

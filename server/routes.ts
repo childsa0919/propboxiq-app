@@ -2,8 +2,10 @@ import type { Express, Request, Response } from "express";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { storage } from "./storage";
-import { insertDealSchema } from "@shared/schema";
+import { insertDealSchema, type Deal } from "@shared/schema";
 import { normalizeBudget, type DealBudget } from "@shared/budgetTemplate";
+import { buildRefreshPayload, buildBackfillPayload } from "./snapshots";
+import { computeChangeSummary, computeCompare, type SnapshotPayload } from "@shared/snapshot";
 import {
   sessionMiddleware,
   requireAuth,
@@ -1769,6 +1771,149 @@ export async function registerRoutes(
     });
     if (!updated) return res.status(404).json({ error: "Not found" });
     res.json(budget);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Deal Snapshots (v1.7.0 "Refresh Deal"). Every snapshot is a full frozen
+  // re-run of comps + enrichment + scoring. Hard cap of 20 snapshots per deal;
+  // the first (is_original) snapshot is backfilled from stored state and can
+  // never be pruned or manually deleted.
+  // ──────────────────────────────────────────────────────────────────────
+  const SNAPSHOT_CAP = 20;
+
+  function parsePayload(json: string): SnapshotPayload | null {
+    try {
+      return JSON.parse(json) as SnapshotPayload;
+    } catch {
+      return null;
+    }
+  }
+
+  // Ensure a deal has an is_original backfill snapshot. Returns the original
+  // row if it was just created, otherwise null. No API re-run, no credit burn.
+  async function ensureBackfill(dealId: number, deal: Deal) {
+    const count = await storage.countSnapshots(dealId);
+    if (count > 0) return null;
+    const payload = buildBackfillPayload(deal);
+    return storage.createSnapshot(dealId, JSON.stringify(payload), null, true);
+  }
+
+  // POST /api/deals/:dealId/refresh — re-run full analysis, freeze a snapshot.
+  app.post("/api/deals/:dealId/refresh", requireAuth, async (req, res) => {
+    const userId = (req as any).userId as number;
+    const dealId = Number(req.params.dealId);
+    const deal = await storage.getDeal(dealId, userId);
+    if (!deal) return res.status(404).json({ error: "Not found" });
+
+    // Make sure history has a baseline before the first refresh.
+    await ensureBackfill(dealId, deal);
+
+    const payload = await buildRefreshPayload(req, deal);
+
+    // Diff against the most recent existing snapshot (backfill or prior refresh).
+    const existing = await storage.listSnapshots(dealId);
+    const prevPayload = existing.length ? parsePayload(existing[0].payload) : null;
+    const changeSummary = computeChangeSummary(prevPayload, payload);
+
+    const snapshot = await storage.createSnapshot(
+      dealId,
+      JSON.stringify(payload),
+      JSON.stringify(changeSummary),
+      false,
+    );
+    await storage.pruneSnapshots(dealId, SNAPSHOT_CAP);
+
+    res.status(201).json({ snapshot, changeSummary, warnings: payload.warnings });
+  });
+
+  // GET /api/deals/:dealId/snapshots — list (newest first). Backfills the
+  // original snapshot on first access so history "starts now".
+  app.get("/api/deals/:dealId/snapshots", requireAuth, async (req, res) => {
+    const userId = (req as any).userId as number;
+    const dealId = Number(req.params.dealId);
+    const deal = await storage.getDeal(dealId, userId);
+    if (!deal) return res.status(404).json({ error: "Not found" });
+
+    const backfilled = await ensureBackfill(dealId, deal);
+    const rows = await storage.listSnapshots(dealId);
+    const snapshots = rows.map((r) => {
+      const payload = parsePayload(r.payload);
+      return {
+        id: r.id,
+        dealId: r.dealId,
+        isOriginal: r.isOriginal,
+        createdAt: r.createdAt,
+        changeSummary: r.changeSummary ? JSON.parse(r.changeSummary) : null,
+        preview: payload
+          ? {
+              arv: payload.arv?.value ?? null,
+              rent: payload.rentAvm?.median ?? null,
+              profit: payload.flip?.netProfit ?? null,
+              compCount: payload.arv?.compCount ?? null,
+            }
+          : null,
+      };
+    });
+    res.json({ snapshots, backfilled: !!backfilled });
+  });
+
+  // GET /api/deals/:dealId/snapshots/:snapshotId — full frozen payload.
+  app.get("/api/deals/:dealId/snapshots/:snapshotId", requireAuth, async (req, res) => {
+    const userId = (req as any).userId as number;
+    const dealId = Number(req.params.dealId);
+    const snapshotId = Number(req.params.snapshotId);
+    const deal = await storage.getDeal(dealId, userId);
+    if (!deal) return res.status(404).json({ error: "Not found" });
+    const row = await storage.getSnapshot(dealId, snapshotId);
+    if (!row) return res.status(404).json({ error: "Snapshot not found" });
+    res.json({
+      id: row.id,
+      dealId: row.dealId,
+      isOriginal: row.isOriginal,
+      createdAt: row.createdAt,
+      changeSummary: row.changeSummary ? JSON.parse(row.changeSummary) : null,
+      payload: parsePayload(row.payload),
+    });
+  });
+
+  // POST /api/deals/:dealId/snapshots/compare — structured diff of two snapshots.
+  app.post("/api/deals/:dealId/snapshots/compare", requireAuth, async (req, res) => {
+    const userId = (req as any).userId as number;
+    const dealId = Number(req.params.dealId);
+    const deal = await storage.getDeal(dealId, userId);
+    if (!deal) return res.status(404).json({ error: "Not found" });
+
+    const baselineId = Number(req.body?.baselineId);
+    const currentId = Number(req.body?.currentId);
+    if (!Number.isFinite(baselineId) || !Number.isFinite(currentId)) {
+      return res.status(400).json({ error: "baselineId and currentId are required" });
+    }
+    const [baseRow, curRow] = await Promise.all([
+      storage.getSnapshot(dealId, baselineId),
+      storage.getSnapshot(dealId, currentId),
+    ]);
+    if (!baseRow || !curRow) return res.status(404).json({ error: "Snapshot not found" });
+    const basePayload = parsePayload(baseRow.payload);
+    const curPayload = parsePayload(curRow.payload);
+    if (!basePayload || !curPayload) {
+      return res.status(500).json({ error: "Snapshot payload corrupted" });
+    }
+    res.json(computeCompare(basePayload, curPayload));
+  });
+
+  // DELETE /api/deals/:dealId/snapshots/:snapshotId — non-original only.
+  app.delete("/api/deals/:dealId/snapshots/:snapshotId", requireAuth, async (req, res) => {
+    const userId = (req as any).userId as number;
+    const dealId = Number(req.params.dealId);
+    const snapshotId = Number(req.params.snapshotId);
+    const deal = await storage.getDeal(dealId, userId);
+    if (!deal) return res.status(404).json({ error: "Not found" });
+    const result = await storage.deleteSnapshot(dealId, snapshotId);
+    if (result === "not_found") return res.status(404).json({ error: "Snapshot not found" });
+    if (result === "is_original") {
+      return res.status(403).json({ error: "The original snapshot cannot be deleted" });
+    }
+    res.status(204).end();
   });
 
   // ──────────────────────────────────────────────────────────────────────

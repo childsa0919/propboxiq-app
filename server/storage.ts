@@ -1,8 +1,8 @@
-import { deals, users, magicTokens, sessions } from '@shared/schema';
-import type { Deal, InsertDeal, User, MagicToken, Session } from '@shared/schema';
+import { deals, users, magicTokens, sessions, dealSnapshots } from '@shared/schema';
+import type { Deal, InsertDeal, User, MagicToken, Session, DealSnapshot } from '@shared/schema';
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { and, eq, desc, gt, lt, isNull, or } from "drizzle-orm";
+import { and, eq, desc, gt, lt, isNull, or, asc } from "drizzle-orm";
 import { mkdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
@@ -82,6 +82,16 @@ sqlite.exec(`
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS deal_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    deal_id INTEGER NOT NULL,
+    is_original INTEGER NOT NULL DEFAULT 0,
+    payload TEXT NOT NULL,
+    change_summary TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_deal_snapshots_deal_id ON deal_snapshots(deal_id);
 `);
 
 // Migration: add user_id column to deals if missing (for upgrades from pre-auth db)
@@ -183,6 +193,20 @@ export interface IStorage {
   updateDeal(id: number, userId: number, deal: Partial<InsertDeal>): Promise<Deal | undefined>;
   deleteDeal(id: number, userId: number): Promise<boolean>;
 
+  // Deal snapshots (v1.7.0). Callers must verify deal ownership first.
+  listSnapshots(dealId: number): Promise<DealSnapshot[]>;
+  getSnapshot(dealId: number, snapshotId: number): Promise<DealSnapshot | undefined>;
+  countSnapshots(dealId: number): Promise<number>;
+  createSnapshot(
+    dealId: number,
+    payload: string,
+    changeSummary: string | null,
+    isOriginal: boolean,
+  ): Promise<DealSnapshot>;
+  deleteSnapshot(dealId: number, snapshotId: number): Promise<"deleted" | "not_found" | "is_original">;
+  /** Prune oldest non-original snapshots until at most `max` remain. */
+  pruneSnapshots(dealId: number, max: number): Promise<number>;
+
   // Users
   getUserById(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
@@ -278,6 +302,86 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(deals.id, id), dealOwnership(userId)))
       .run();
     return (res.changes ?? 0) > 0;
+  }
+
+  // ---------- Deal snapshots ----------
+  async listSnapshots(dealId: number): Promise<DealSnapshot[]> {
+    return db
+      .select()
+      .from(dealSnapshots)
+      .where(eq(dealSnapshots.dealId, dealId))
+      .orderBy(desc(dealSnapshots.createdAt), desc(dealSnapshots.id))
+      .all();
+  }
+
+  async getSnapshot(dealId: number, snapshotId: number): Promise<DealSnapshot | undefined> {
+    return db
+      .select()
+      .from(dealSnapshots)
+      .where(and(eq(dealSnapshots.id, snapshotId), eq(dealSnapshots.dealId, dealId)))
+      .get();
+  }
+
+  async countSnapshots(dealId: number): Promise<number> {
+    const rows = db
+      .select({ id: dealSnapshots.id })
+      .from(dealSnapshots)
+      .where(eq(dealSnapshots.dealId, dealId))
+      .all();
+    return rows.length;
+  }
+
+  async createSnapshot(
+    dealId: number,
+    payload: string,
+    changeSummary: string | null,
+    isOriginal: boolean,
+  ): Promise<DealSnapshot> {
+    return db
+      .insert(dealSnapshots)
+      .values({
+        dealId,
+        payload,
+        changeSummary,
+        isOriginal,
+        createdAt: Date.now(),
+      })
+      .returning()
+      .get();
+  }
+
+  async deleteSnapshot(
+    dealId: number,
+    snapshotId: number,
+  ): Promise<"deleted" | "not_found" | "is_original"> {
+    const row = await this.getSnapshot(dealId, snapshotId);
+    if (!row) return "not_found";
+    if (row.isOriginal) return "is_original";
+    db.delete(dealSnapshots).where(eq(dealSnapshots.id, snapshotId)).run();
+    return "deleted";
+  }
+
+  async pruneSnapshots(dealId: number, max: number): Promise<number> {
+    // Enforce a hard cap of `max` TOTAL snapshots per deal. When over the cap,
+    // delete the oldest NON-original snapshots first; the original is never
+    // pruned even if that means staying above the cap.
+    const rows = db
+      .select({ id: dealSnapshots.id, isOriginal: dealSnapshots.isOriginal })
+      .from(dealSnapshots)
+      .where(eq(dealSnapshots.dealId, dealId))
+      .orderBy(asc(dealSnapshots.createdAt), asc(dealSnapshots.id))
+      .all();
+    let excess = rows.length - max;
+    if (excess <= 0) return 0;
+    let removed = 0;
+    for (const r of rows) {
+      if (excess <= 0) break;
+      if (r.isOriginal) continue;
+      db.delete(dealSnapshots).where(eq(dealSnapshots.id, r.id)).run();
+      removed++;
+      excess--;
+    }
+    return removed;
   }
 
   // ---------- Users ----------

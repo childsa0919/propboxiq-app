@@ -12,6 +12,19 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.7.0",
+    date: "2026-07-22",
+    added: [
+      "Refresh Deal: re-run comps, enrichment, and scores on demand — freezes a full point-in-time snapshot",
+      "Snapshot History: browse the latest snapshots with ARV / rent deltas per refresh",
+      "Compare view: pick any two snapshots and see green/red deltas across Deal Metrics, Comps, Site Intelligence, and Budget",
+      "Deal quality trend summary (improved / regressed / unchanged) at a glance",
+    ],
+    changed: [
+      "Deals never auto-refresh on open — every refresh is an explicit, credit-burning action",
+    ],
+  },
+  {
     version: "1.6.1",
     date: "2026-07-22",
     added: [

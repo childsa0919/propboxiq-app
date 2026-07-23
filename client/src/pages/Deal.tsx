@@ -24,6 +24,14 @@ import { exportDealPdf, exportDealPdfBlob } from "@/lib/exportPdf";
 import { EmailPdfDialog } from "@/components/EmailPdfDialog";
 import { WalkthroughBudget } from "@/components/WalkthroughBudget";
 import { MarketStatsPanel } from "@/components/MarketStatsPanel";
+import { SnapshotHistory, type SnapshotListItem } from "@/components/SnapshotHistory";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import {
   ArrowLeft,
   MapPin,
@@ -35,6 +43,10 @@ import {
   Building,
   Mail,
   ClipboardList,
+  RefreshCw,
+  MoreHorizontal,
+  GitCompare,
+  Trash2,
 } from "lucide-react";
 
 export default function DealPage() {
@@ -108,6 +120,47 @@ export default function DealPage() {
     },
   });
 
+  // Snapshot history — used for the hero delta pill and (via SnapshotHistory) the
+  // history card. First access backfills the "original" snapshot server-side.
+  const { data: snapshotData } = useQuery<{ snapshots: SnapshotListItem[] }>({
+    queryKey: ["/api/deals", dealId, "snapshots"],
+    enabled: Number.isFinite(dealId),
+  });
+  const latestSnapshot = snapshotData?.snapshots?.[0] ?? null;
+
+  const refreshMut = useMutation({
+    mutationFn: async () => {
+      toast({ title: "Fetching fresh comps…" });
+      const res = await apiRequest("POST", `/api/deals/${dealId}/refresh`, {});
+      return res.json() as Promise<{
+        changeSummary: { changeCount: number };
+        warnings: string[];
+      }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "snapshots"] });
+      const n = data.changeSummary?.changeCount ?? 0;
+      const w = data.warnings?.length ?? 0;
+      toast({
+        title: w > 0 ? `Snapshot saved · ${w} warning${w === 1 ? "" : "s"}` : `Snapshot saved · ${n} change${n === 1 ? "" : "s"}`,
+      });
+    },
+    onError: () => {
+      toast({ title: "Refresh failed", description: "Could not fetch fresh comps. Try again." });
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/deals/${dealId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
+      toast({ title: "Deal deleted" });
+      navigate("/");
+    },
+  });
+
   if (isLoading || !deal) {
     return (
       <div className="mx-auto max-w-6xl px-4 sm:px-6 py-10">
@@ -149,22 +202,21 @@ export default function DealPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => exportDealPdf(deal, inputs)}
-            data-testid="button-export-pdf"
+          <button
+            type="button"
+            onClick={() => refreshMut.mutate()}
+            disabled={refreshMut.isPending}
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold transition-opacity hover:opacity-90 disabled:opacity-60"
+            style={{
+              color: "#5fd4e7",
+              backgroundColor: "rgba(94,212,231,0.1)",
+              borderRadius: 8,
+            }}
+            data-testid="button-refresh"
           >
-            <Download className="h-4 w-4 mr-2" />
-            Export PDF
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setEmailOpen(true)}
-            data-testid="button-email-pdf"
-          >
-            <Mail className="h-4 w-4 mr-2" />
-            Email
-          </Button>
+            <RefreshCw className={`h-4 w-4 ${refreshMut.isPending ? "animate-spin" : ""}`} />
+            {refreshMut.isPending ? "Refreshing…" : "Refresh"}
+          </button>
           <Button
             onClick={() => saveMut.mutate()}
             disabled={!dirty || saveMut.isPending}
@@ -173,6 +225,40 @@ export default function DealPage() {
             <Save className="h-4 w-4 mr-2" />
             {saveMut.isPending ? "Saving…" : dirty ? "Save changes" : "Saved"}
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" aria-label="More actions" data-testid="button-more-menu">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => refreshMut.mutate()} data-testid="menu-refresh">
+                <RefreshCw className="h-4 w-4 mr-2" /> Refresh
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => navigate(`/deal/${dealId}/compare`)}
+                data-testid="menu-compare"
+              >
+                <GitCompare className="h-4 w-4 mr-2" /> Compare snapshots
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => exportDealPdf(deal, inputs)} data-testid="menu-export-pdf">
+                <Download className="h-4 w-4 mr-2" /> Export PDF
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setEmailOpen(true)} data-testid="menu-email-pdf">
+                <Mail className="h-4 w-4 mr-2" /> Email
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => {
+                  if (confirm("Delete this deal? This cannot be undone.")) deleteMut.mutate();
+                }}
+                className="text-destructive focus:text-destructive"
+                data-testid="menu-delete-deal"
+              >
+                <Trash2 className="h-4 w-4 mr-2" /> Delete deal
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -518,7 +604,8 @@ export default function DealPage() {
 
         {/* Right: Sticky results */}
         <div className="lg:sticky lg:top-20 self-start space-y-4">
-          <ResultsPanel inputs={inputs} />
+          <ResultsPanel inputs={inputs} latestSnapshot={latestSnapshot} />
+          <SnapshotHistory dealId={dealId} />
         </div>
       </div>
 
@@ -641,10 +728,24 @@ function Sensitivity({
   );
 }
 
-function ResultsPanel({ inputs }: { inputs: DealInputs }) {
+function daysAgo(ms: number): number {
+  return Math.max(0, Math.floor((Date.now() - ms) / (24 * 60 * 60 * 1000)));
+}
+
+function ResultsPanel({
+  inputs,
+  latestSnapshot,
+}: {
+  inputs: DealInputs;
+  latestSnapshot: SnapshotListItem | null;
+}) {
   const r = calculateDeal(inputs);
   const profitable = r.netProfit >= 0;
   const goodMargin = r.profitMarginPct >= 15;
+
+  const snapProfit = latestSnapshot?.preview?.profit ?? null;
+  const profitDelta = snapProfit != null ? r.netProfit - snapProfit : null;
+  const showPill = profitDelta != null && Math.abs(profitDelta) >= 1;
 
   return (
     <Card className="border-2">
@@ -662,18 +763,38 @@ function ResultsPanel({ inputs }: { inputs: DealInputs }) {
         {/* Hero KPI */}
         <div>
           <p className="text-xs text-muted-foreground mb-1">Net profit</p>
-          <p
-            className={`text-3xl font-semibold tabular-nums ${
-              profitable ? "text-accent" : "text-destructive"
-            }`}
-            data-testid="text-net-profit"
-          >
-            {fmtUSD(r.netProfit)}
-          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p
+              className={`text-3xl font-semibold tabular-nums ${
+                profitable ? "text-accent" : "text-destructive"
+              }`}
+              data-testid="text-net-profit"
+            >
+              {fmtUSD(r.netProfit)}
+            </p>
+            {showPill && (
+              <span
+                className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={{
+                  color: profitDelta! >= 0 ? "#7fd4a8" : "#e56666",
+                  backgroundColor:
+                    profitDelta! >= 0 ? "rgba(127,212,168,0.12)" : "rgba(229,102,102,0.12)",
+                }}
+                data-testid="pill-profit-delta"
+              >
+                {profitDelta! >= 0 ? "↑" : "↓"} {fmtUSD(Math.abs(profitDelta!))}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground mt-1">
             {fmtPct(r.profitMarginPct)} margin on ARV
             {goodMargin && profitable ? " · healthy" : ""}
           </p>
+          {showPill && latestSnapshot && (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              vs. last snapshot · {daysAgo(latestSnapshot.createdAt)} days ago
+            </p>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-3">
