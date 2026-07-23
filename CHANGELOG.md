@@ -3,6 +3,16 @@
 All notable changes to PropBoxIQ are documented here. This project follows
 [semantic versioning](https://semver.org/).
 
+## [1.7.2] — 2026-07-22
+### Changed
+- Comp ranking now prioritizes SAME CITY, then SAME ZIP, above raw price
+- ARV selection tier order: same-city+same-style → same-city → same-ZIP+same-style → same-ZIP → regional+same-style → regional
+- ARV card shows a summary line explaining which tier(s) drove the number
+- Each comp card shows a location tier badge (SAME CITY / SAME ZIP / REGIONAL)
+
+### Added
+- 'Flooring' added to the default Walkthrough Budget line items (Interior Finish category)
+
 ## [1.7.1] — 2026-07-22
 ### Fixed
 - Walkthrough Budget button now available on the Flip and Hold wizard rehab steps (was previously only on the result page)

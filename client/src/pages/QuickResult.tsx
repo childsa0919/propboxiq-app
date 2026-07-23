@@ -46,6 +46,7 @@ import {
   combinedHvacLabel,
   hvacMatch,
   normalizeStyle,
+  tierLocationLabel,
 } from "@shared/propAttributes";
 import { exportDealPdf, exportDealPdfBlob } from "@/lib/exportPdf";
 import { EmailPdfDialog } from "@/components/EmailPdfDialog";
@@ -613,6 +614,9 @@ type SavedComp = {
   sewer?: "public" | "septic" | "unknown";
   waterSewerLabel?: string | null;
   styleMatch?: boolean;
+  city?: string | null;
+  zip?: string | null;
+  tier?: 1 | 2 | 3 | 4 | 5 | 6;
 };
 
 type SavedCompsData = {
@@ -623,6 +627,8 @@ type SavedCompsData = {
   arvMethod?: string;
   arvBasis?: "style-matched" | "top-price";
   styleMatchCount?: number;
+  selectedTiers?: number[];
+  selectionSummary?: string;
   arvAnchorPpsf?: number | null;
   arvTopCompIds?: string[];
   compCount: number;
@@ -630,6 +636,8 @@ type SavedCompsData = {
   subject: {
     address: string;
     sqft: number | null;
+    city?: string | null;
+    zip?: string | null;
     style?: string | null;
     heatingType?: string | null;
     coolingType?: string | null;
@@ -902,12 +910,14 @@ function CompsSection({
           />
         </div>
 
-        {/* ARV basis note (item 5): style-matched vs top-by-price */}
+        {/* ARV basis note (v1.7.2): tier-based selection summary (city + ZIP + style) */}
         {!isOverridden && (
           <p className="mb-3 text-[11px] font-medium text-muted-foreground">
-            {data.arvBasis === "style-matched" && data.styleMatchCount
-              ? `Based on ${data.styleMatchCount} style-matched comps`
-              : "Based on top comps by price"}
+            {data.selectionSummary
+              ? data.selectionSummary
+              : data.arvBasis === "style-matched" && data.styleMatchCount
+                ? `Based on ${data.styleMatchCount} style-matched comps`
+                : "Based on top comps by price"}
           </p>
         )}
 
@@ -1200,6 +1210,28 @@ function HeroBadge({ tone, label }: { tone: BadgeTone; label: string }) {
   );
 }
 
+// Location tier pill (v1.7.2). Sits at the front of the badge row for prominence.
+// Green = SAME CITY (tier 1/2), cyan = SAME ZIP (tier 3/4), gray = REGIONAL (5/6).
+function tierPillStyle(tier: number): React.CSSProperties {
+  if (tier <= 2) return { background: "#7fd4a8", color: "#0a0e12" };
+  if (tier <= 4) return { background: "#5fd4e7", color: "#0a0e12" };
+  return {
+    background: "rgba(230,238,242,0.10)",
+    color: "rgba(230,238,242,0.65)",
+  };
+}
+
+function TierPill({ tier }: { tier: number }) {
+  return (
+    <span
+      className="inline-flex h-[24px] items-center rounded-full px-2.5 text-[10px] font-bold uppercase tracking-wide leading-none whitespace-nowrap"
+      style={tierPillStyle(tier)}
+    >
+      {tierLocationLabel(tier)}
+    </span>
+  );
+}
+
 function CompHeroBadges({
   comp,
   subject,
@@ -1257,6 +1289,7 @@ function CompHeroBadges({
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      {comp.tier != null && <TierPill tier={comp.tier} />}
       <HeroBadge tone={styleTone} label={styleLabel} />
       <HeroBadge tone={wsTone} label={wsLabel ?? "Water/Sewer —"} />
       <HeroBadge tone={hvacTone} label={hvac ?? "HVAC —"} />

@@ -36,7 +36,12 @@ import {
 } from "./rentcast";
 import { enrichComp, enrichComps } from "./compEnrich";
 import { computeArvFromComps } from "@shared/arv";
-import { stylesMatch } from "@shared/propAttributes";
+import {
+  stylesMatch,
+  citiesMatch,
+  zipsMatch,
+  compTier,
+} from "@shared/propAttributes";
 import { MD_GIS_SCOPE } from "./siteGis";
 import {
   runWelcomeDrip,
@@ -502,6 +507,39 @@ export async function registerRoutes(
     }
   });
 
+  // Build the ARV card subtitle from the tiers of the selected comps (v1.7.2).
+  // e.g. [1,1,1,1] → "4 same-city + same-style comps"; [1,1,3,4] → mixed;
+  // [6,6] → "top-priced regional comps (no style match)".
+  function buildSelectionSummary(tiers: number[]): string {
+    if (tiers.length === 0) return "No comps available";
+    const n = tiers.length;
+    const sameCity = tiers.filter((t) => t <= 2).length;
+    const sameZip = tiers.filter((t) => t === 3 || t === 4).length;
+    const regional = tiers.filter((t) => t >= 5).length;
+    const styleMatched = tiers.filter((t) => t === 1 || t === 3 || t === 5).length;
+
+    // Clean cases: all one location band.
+    if (sameCity === n) {
+      return styleMatched === n
+        ? `Based on ${n} same-city + same-style comp${n === 1 ? "" : "s"}`
+        : `Based on ${n} same-city comp${n === 1 ? "" : "s"}`;
+    }
+    if (regional === n && styleMatched === 0) {
+      return "Based on top-priced regional comps (no style match)";
+    }
+
+    // Mixed: describe the dominant contributions in priority order.
+    const parts: string[] = [];
+    const cityStyle = tiers.filter((t) => t === 1).length;
+    const cityOnly = tiers.filter((t) => t === 2).length;
+    const zipStyle = tiers.filter((t) => t === 3).length;
+    if (cityStyle) parts.push(`${cityStyle} same-city style-matched`);
+    if (cityOnly) parts.push(`${cityOnly} same-city`);
+    if (sameZip) parts.push(`${sameZip} same-ZIP${zipStyle === sameZip ? " style-matched" : ""}`);
+    if (regional) parts.push(`${regional} regional`);
+    return `Based on ${parts.join(" + ")}`;
+  }
+
   // ----- Comps (RentCast AVM with cascading radius) -----
   // Filter rules: ±15% sqft, last 6 months. Try 0.25 mi → 0.5 mi → 0.75 mi
   // until we have at least 4 comps. Returns comps + computed ARV (median $/sqft).
@@ -547,6 +585,8 @@ export async function registerRoutes(
       lat: number | null;
       lon: number | null;
       saleStatus: string | null;
+      city: string | null;
+      zip: string | null;
       // Enrichment (item 4/5/6) — populated after the cascade selects the comp set.
       style?: string | null;
       heatingType?: string | null;
@@ -556,9 +596,12 @@ export async function registerRoutes(
       sewer?: "public" | "septic" | "unknown";
       waterSewerLabel?: string | null;
       styleMatch?: boolean;
+      tier?: 1 | 2 | 3 | 4 | 5 | 6;
     };
 
     let subjectSqft: number | null = null;
+    let subjectCity: string | null = null;
+    let subjectZip: string | null = null;
     let subjectAddress: string | null = null;
     let subjectLat: number | null = null;
     let subjectLon: number | null = null;
@@ -587,6 +630,8 @@ export async function registerRoutes(
         subjectAddress = (sp.formattedAddress as string | undefined) ?? subjectAddress;
         subjectLat = (sp.latitude as number | undefined) ?? subjectLat;
         subjectLon = (sp.longitude as number | undefined) ?? subjectLon;
+        subjectCity = (sp.city as string | undefined) ?? subjectCity;
+        subjectZip = (sp.zipCode as string | undefined) ?? subjectZip;
 
         // Match window centers on post-rehab target sqft if provided, else subject sqft.
         const matchSqft = targetSqft ?? subjectSqft;
@@ -625,6 +670,8 @@ export async function registerRoutes(
             lat: c.latitude ?? null,
             lon: c.longitude ?? null,
             saleStatus: c.status ?? null,
+            city: (c.city as string | undefined) ?? null,
+            zip: (c.zipCode as string | undefined) ?? null,
           }));
 
         if (filtered.length >= MIN_COMPS) {
@@ -696,8 +743,16 @@ export async function registerRoutes(
       enrichComps(comps.map((c) => ({ address: c.address, lat: c.lat, lon: c.lon }))),
     ]);
     const subjectStyle = subjectEnrich.style;
+    // Tier assignment (item: v1.7.2). City + ZIP are hard priority axes ABOVE
+    // price; style layers in as the secondary axis within each location band.
+    // Enrichment failure (no style) collapses to "different style" via stylesMatch.
     comps = comps.map((c, i) => {
       const e = compEnrichments[i];
+      const styleMatch = stylesMatch(subjectStyle, e.style);
+      // Subject city missing → no comp can be same-city (skip to ZIP/regional).
+      const sameCity = subjectCity != null && citiesMatch(subjectCity, c.city);
+      // Subject ZIP missing → tiers 3/4 impossible (collapse into 5/6).
+      const sameZip = subjectZip != null && zipsMatch(subjectZip, c.zip);
       return {
         ...c,
         style: e.style,
@@ -707,32 +762,50 @@ export async function registerRoutes(
         water: e.water,
         sewer: e.sewer,
         waterSewerLabel: e.waterSewerLabel,
-        styleMatch: stylesMatch(subjectStyle, e.style),
+        styleMatch,
+        tier: compTier(sameCity, sameZip, styleMatch),
       };
     });
 
-    // ----- Style-priority ranking (item 5) -----
-    // If ≥6 comps match the subject's house style, ARV is driven by the top-4 of
-    // those style-matched comps; otherwise fall back to top-4 by price across all.
-    const STYLE_MATCH_MIN = 6;
+    // ----- Tiered comp ranking (v1.7.2) -----
+    // Six priority tiers (1 = same-city+same-style … 6 = regional+different-style).
+    // Walk tiers in order, filling up to 4 ARV-driving slots; within a tier the
+    // highest-priced comps win. City always beats price; style is secondary.
     const styleMatchCount = comps.filter((c) => c.styleMatch).length;
-    const useStyleMatched = subjectStyle != null && styleMatchCount >= STYLE_MATCH_MIN;
-    const rankingPool = useStyleMatched ? comps.filter((c) => c.styleMatch) : comps;
-    const arvBasis: "style-matched" | "top-price" = useStyleMatched
-      ? "style-matched"
-      : "top-price";
+    const ARV_SLOTS = 4;
+    const selected: Comp[] = [];
+    const selectedTiers: number[] = [];
+    for (let tier = 1 as number; tier <= 6 && selected.length < ARV_SLOTS; tier++) {
+      const inTier = comps
+        .filter((c) => c.tier === tier)
+        .sort((a, b) => b.price - a.price);
+      for (const c of inTier) {
+        if (selected.length >= ARV_SLOTS) break;
+        selected.push(c);
+        selectedTiers.push(tier);
+      }
+    }
+
+    // Human-readable summary of which tier(s) drove the ARV (powers the ARV card
+    // subtitle). Counts selected comps by location band + style.
+    const selectionSummary = buildSelectionSummary(selectedTiers);
+    const arvBasis: "style-matched" | "top-price" =
+      selectedTiers.some((t) => t === 1 || t === 3 || t === 5)
+        ? "style-matched"
+        : "top-price";
 
     // ----- Unified ARV (item 3): shared top-4-by-price × mean $/sqft formula -----
-    // Band always uses the TOTAL comp count, not the (possibly narrowed) pool.
+    // The formula itself is UNCHANGED — only which comps feed it (the tier-selected
+    // set). Band always uses the TOTAL comp count, not the selected count.
     const arvSqft = targetSqft ?? subjectSqft;
     const arvResult = computeArvFromComps(
-      rankingPool.map((c) => ({ id: c.id, price: c.price, pricePerSqft: c.pricePerSqft })),
+      selected.map((c) => ({ id: c.id, price: c.price, pricePerSqft: c.pricePerSqft })),
       arvSqft,
       comps.length,
     );
     const { arv, arvLow, arvHigh } = arvResult;
     console.log(
-      `[comps] ARV ${arv} (basis=${arvBasis}, pool=${rankingPool.length}, ` +
+      `[comps] ARV ${arv} (tiers=[${selectedTiers.join(",")}], ` +
         `anchor=${arvResult.anchorPpsf ?? "n/a"}/sqft, band=±${Math.round(arvResult.band * 100)}%)`,
     );
 
@@ -745,6 +818,8 @@ export async function registerRoutes(
       subject: {
         address: subjectAddress ?? address,
         sqft: subjectSqft,
+        city: subjectCity,
+        zip: subjectZip,
         style: subjectEnrich.style,
         heatingType: subjectEnrich.heatingType,
         coolingType: subjectEnrich.coolingType,
@@ -766,6 +841,9 @@ export async function registerRoutes(
       arvMethod: "top4-by-price-mean-ppsf",
       arvBasis,
       styleMatchCount,
+      // Tiered ranking metadata (v1.7.2) — powers the ARV summary line.
+      selectedTiers,
+      selectionSummary,
       arvAnchorPpsf: arvResult.anchorPpsf,
       arvTopCompIds: arvResult.topCompIds,
       compCount: comps.length,
