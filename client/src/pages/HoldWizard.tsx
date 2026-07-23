@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ArrowRight, MapPin, Minus, Plus } from "lucide-react";
+import { X, ArrowRight, MapPin, Minus, Plus, ClipboardList } from "lucide-react";
 import {
   AddressAutocomplete,
   type AddressMatch,
@@ -19,6 +19,9 @@ import {
   type RehabMode,
 } from "@/lib/holdState";
 import { cn } from "@/lib/utils";
+import { WalkthroughBudget } from "@/components/WalkthroughBudget";
+import { budgetGrandTotal, type DealBudget } from "@shared/budgetTemplate";
+import type { Deal } from "@shared/schema";
 
 const STEP_COUNT = 7;
 
@@ -90,6 +93,11 @@ export default function HoldWizard() {
   const [state, setState] = useState<HoldWizardState>(hydrated.current.initialState);
   const [pricingTouched, setPricingTouched] = useState(hydrated.current.fromEdit);
   const [rentTouched, setRentTouched] = useState(hydrated.current.fromEdit);
+
+  // Walkthrough Budget — in-memory for the wizard session. "Apply to Deal"
+  // enables rehab and fills the rehab number with the grand total.
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const [walkBudget, setWalkBudget] = useState<DealBudget | null>(null);
 
   const update = useCallback((patch: Partial<HoldWizardState>) => {
     setState((s) => ({ ...s, ...patch }));
@@ -310,7 +318,11 @@ export default function HoldWizard() {
                 />
               )}
               {step === 3 && (
-                <StepRehab state={state} update={update} />
+                <StepRehab
+                  state={state}
+                  update={update}
+                  onOpenBudget={() => setBudgetOpen(true)}
+                />
               )}
               {step === 4 && (
                 <StepRent
@@ -363,6 +375,29 @@ export default function HoldWizard() {
           </div>
         </div>
       )}
+
+      {/* Walkthrough Budget — in-memory on the wizard; "Apply to Deal" enables
+          rehab (BRRRR mode) and fills the rehab number with the grand total. */}
+      <WalkthroughBudget
+        deal={
+          {
+            id: NaN,
+            name: null,
+            address: state.address || "New deal",
+          } as unknown as Deal
+        }
+        open={budgetOpen}
+        onOpenChange={setBudgetOpen}
+        budgetOverride={walkBudget}
+        onBudgetChange={setWalkBudget}
+        onApply={(total) =>
+          update({
+            rehabEnabled: true,
+            rehabMode: "brrrr",
+            rehab: Math.round(total),
+          })
+        }
+      />
     </div>
   );
 }
@@ -601,9 +636,11 @@ function StepPurchase({
 function StepRehab({
   state,
   update,
+  onOpenBudget,
 }: {
   state: HoldWizardState;
   update: (p: Partial<HoldWizardState>) => void;
+  onOpenBudget: () => void;
 }) {
   function setMode(mode: RehabMode) {
     haptic();
@@ -701,6 +738,19 @@ function StepRehab({
               </span>
             </div>
           )}
+
+          {/* Walkthrough Budget — itemize rehab; "Apply to Deal" fills the
+              number above with the grand total. */}
+          <button
+            type="button"
+            onClick={onOpenBudget}
+            className="mt-3 flex w-full items-center justify-center gap-2 py-3.5 font-semibold transition-opacity hover:opacity-90"
+            style={{ backgroundColor: "#f5c948", color: "#0a0e12", borderRadius: 12 }}
+            data-testid="button-walkthrough-budget"
+          >
+            <ClipboardList className="h-4 w-4" />
+            Walkthrough Budget
+          </button>
         </>
       )}
     </div>
