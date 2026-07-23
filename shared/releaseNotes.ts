@@ -12,6 +12,16 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.6.1",
+    date: "2026-07-22",
+    added: [
+      "Walkthrough Budget: itemize rehab across 7 categories with 29 default line items",
+      "Add custom line items to any category",
+      "Save budget per deal, restore on reopen",
+      "Export categorized Budget PDF for contractor bidding",
+    ],
+  },
+  {
     version: "1.6.0",
     date: "2026-07-22",
     added: [

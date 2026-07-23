@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { storage } from "./storage";
 import { insertDealSchema } from "@shared/schema";
+import { normalizeBudget, type DealBudget } from "@shared/budgetTemplate";
 import {
   sessionMiddleware,
   requireAuth,
@@ -1735,6 +1736,39 @@ export async function registerRoutes(
     const ok = await storage.deleteDeal(id, userId);
     if (!ok) return res.status(404).json({ error: "Not found" });
     res.status(204).end();
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Walkthrough Budget — per-deal itemized rehab budget (v1.6.1).
+  // GET returns the saved budget (normalized against the current template) or
+  // the default template if none saved. PUT upserts the full budget JSON.
+  // ──────────────────────────────────────────────────────────────────────
+  app.get("/api/deals/:id/budget", requireAuth, async (req, res) => {
+    const userId = (req as any).userId as number;
+    const id = Number(req.params.id);
+    const deal = await storage.getDeal(id, userId);
+    if (!deal) return res.status(404).json({ error: "Not found" });
+    let raw: unknown = null;
+    if (deal.budget) {
+      try {
+        raw = JSON.parse(deal.budget);
+      } catch {
+        raw = null;
+      }
+    }
+    res.json(normalizeBudget(raw));
+  });
+
+  app.put("/api/deals/:id/budget", requireAuth, async (req, res) => {
+    const userId = (req as any).userId as number;
+    const id = Number(req.params.id);
+    // Normalize whatever the client sends so we never persist a malformed shape.
+    const budget: DealBudget = normalizeBudget(req.body);
+    const updated = await storage.updateDeal(id, userId, {
+      budget: JSON.stringify(budget),
+    });
+    if (!updated) return res.status(404).json({ error: "Not found" });
+    res.json(budget);
   });
 
   // ──────────────────────────────────────────────────────────────────────
