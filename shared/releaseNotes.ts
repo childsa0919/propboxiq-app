@@ -12,6 +12,20 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.7.3",
+    date: "2026-07-28",
+    added: [
+      "Sources & Uses card now supports Edit Mode: tap the pencil to make every % and $ editable",
+      "Changes recalculate live — bar chart, total project cost, and profit all update as you type",
+      "Itemized closing-cost sub-rows are editable too; the parent row re-totals from its items",
+      "Save persists changes to the deal; Cancel discards",
+      "Warning banner when total costs exceed ARV",
+    ],
+    changed: [
+      "Row percentages in the Sources & Uses card are now a share of ARV (they were a share of total project cost)",
+    ],
+  },
+  {
     version: "1.7.2",
     date: "2026-07-22",
     changed: [

@@ -1,8 +1,12 @@
 // Flip deal calculation engine.
 // All inputs in dollars (or % where noted). Pure functions — fully testable.
 
-import type { DealInputs } from "@shared/schema";
-import { computeClosingCosts, type ClosingCostBreakdown } from "./closingCosts";
+import type { DealInputs, SourcesUsesOverrides } from "@shared/schema";
+import {
+  computeClosingCosts,
+  type ClosingCostBreakdown,
+  type LineItem,
+} from "./closingCosts";
 
 export interface LocaleHint {
   state?: string | null;
@@ -41,7 +45,32 @@ export interface DealResults {
 
 const pct = (n: number) => (n || 0) / 100;
 
+// Replace modeled line-item amounts with the user's manual figures and re-total
+// the side, so an expanded closing-cost row always sums to its parent.
+function applyItemOverrides(
+  cc: ClosingCostBreakdown,
+  ov: SourcesUsesOverrides | undefined,
+): ClosingCostBreakdown {
+  if (!ov?.buyClosingItems && !ov?.sellClosingItems) return cc;
+  const side = (
+    s: { items: LineItem[]; total: number },
+    edits: Record<string, number> | undefined,
+  ) => {
+    if (!edits) return s;
+    const items = s.items.map((it) =>
+      edits[it.label] != null ? { ...it, amount: edits[it.label] } : it,
+    );
+    return { items, total: items.reduce((sum, it) => sum + it.amount, 0) };
+  };
+  return {
+    ...cc,
+    buy: side(cc.buy, ov.buyClosingItems),
+    sell: side(cc.sell, ov.sellClosingItems),
+  };
+}
+
 export function calculateDeal(i: DealInputs, locale?: LocaleHint): DealResults & { closingCosts?: ClosingCostBreakdown } {
+  const ov = i.sourcesUsesOverrides;
   const rehabContingency = i.rehabBudget * pct(i.rehabContingencyPct);
   const totalRehab = i.rehabBudget + rehabContingency;
 
@@ -53,10 +82,13 @@ export function calculateDeal(i: DealInputs, locale?: LocaleHint): DealResults &
   const loanAmount = isCash ? 0 : ltcBasis * pct(i.loanLtcPct);
 
   // Locale-aware closing costs (when state provided), else fall back to flat %.
-  const closingCosts = locale?.state
+  const modeledClosingCosts = locale?.state
     ? computeClosingCosts(locale.state, i.purchasePrice, i.arv, loanAmount, locale.city)
     : undefined;
-  const buyClosing = closingCosts ? closingCosts.buy.total : i.purchasePrice * pct(i.buyClosingPct);
+  const closingCosts = modeledClosingCosts && applyItemOverrides(modeledClosingCosts, ov);
+  const buyClosing =
+    ov?.buyClosing ??
+    (closingCosts ? closingCosts.buy.total : i.purchasePrice * pct(i.buyClosingPct));
 
   // Cash needed at acquisition: down payment portion of purchase + buy closing
   // (hard money typically funds purchase + rehab; we approximate the down
@@ -69,12 +101,14 @@ export function calculateDeal(i: DealInputs, locale?: LocaleHint): DealResults &
   // is outstanding for the full hold period (real draws grow over time).
   const interestCost =
     loanAmount * (pct(i.loanRatePct) / 12) * i.holdingMonths;
-  const totalFinancingCost = loanPoints + interestCost + loanFeesEff;
+  const totalFinancingCost = ov?.financing ?? loanPoints + interestCost + loanFeesEff;
 
-  const totalHoldingCost = i.monthlyHoldingCosts * i.holdingMonths;
+  const totalHoldingCost = ov?.holding ?? i.monthlyHoldingCosts * i.holdingMonths;
 
-  const sellClosing = closingCosts ? closingCosts.sell.total : i.arv * pct(i.sellClosingPct);
-  const agentCommission = i.arv * pct(i.agentCommissionPct);
+  const sellClosing =
+    ov?.sellClosing ??
+    (closingCosts ? closingCosts.sell.total : i.arv * pct(i.sellClosingPct));
+  const agentCommission = ov?.agentCommission ?? i.arv * pct(i.agentCommissionPct);
   const totalSellCosts = sellClosing + agentCommission;
 
   const totalProjectCost =
@@ -159,12 +193,13 @@ export function calculateDeal(i: DealInputs, locale?: LocaleHint): DealResults &
 //   loanFees         = constant
 // So everything is linear in P. Compute slope a and intercept b: cost(P) = a*P + b.
 function computeMao(i: DealInputs, desiredProfit: number): number {
+  const ov = i.sourcesUsesOverrides;
   const rehabContingency = i.rehabBudget * pct(i.rehabContingencyPct);
   const totalRehab = i.rehabBudget + rehabContingency;
-  const sellClosing = i.arv * pct(i.sellClosingPct);
-  const agentCommission = i.arv * pct(i.agentCommissionPct);
+  const sellClosing = ov?.sellClosing ?? i.arv * pct(i.sellClosingPct);
+  const agentCommission = ov?.agentCommission ?? i.arv * pct(i.agentCommissionPct);
   const totalSellCosts = sellClosing + agentCommission;
-  const totalHoldingCost = i.monthlyHoldingCosts * i.holdingMonths;
+  const totalHoldingCost = ov?.holding ?? i.monthlyHoldingCosts * i.holdingMonths;
 
   const isCash = i.isCashPurchase === true || i.financingType === "cash";
   const ltcRate = isCash ? 0 : pct(i.loanLtcPct);
@@ -174,12 +209,20 @@ function computeMao(i: DealInputs, desiredProfit: number): number {
 
   // financingCost(P) = ltcRate*(P + totalRehab) * loanCostMultiplier + loanFees
   // slope: ltcRate * loanCostMultiplier; intercept: ltcRate*totalRehab*loanCostMultiplier + loanFees
-  const finSlope = ltcRate * loanCostMultiplier;
-  const finIntercept = ltcRate * totalRehab * loanCostMultiplier + loanFeesEff;
+  // A pinned row is a flat dollar figure, so it drops out of the slope entirely.
+  const finSlope = ov?.financing != null ? 0 : ltcRate * loanCostMultiplier;
+  const finIntercept =
+    ov?.financing ?? ltcRate * totalRehab * loanCostMultiplier + loanFeesEff;
+  const buyClosingSlope = ov?.buyClosing != null ? 0 : pct(i.buyClosingPct);
 
-  // cost(P) = P*(1 + buyClosingPct + finSlope) + (totalRehab + totalHoldingCost + totalSellCosts + finIntercept)
-  const a = 1 + pct(i.buyClosingPct) + finSlope;
-  const b = totalRehab + totalHoldingCost + totalSellCosts + finIntercept;
+  // cost(P) = P*(1 + buyClosingSlope + finSlope) + (totalRehab + totalHoldingCost + totalSellCosts + finIntercept)
+  const a = 1 + buyClosingSlope + finSlope;
+  const b =
+    totalRehab +
+    totalHoldingCost +
+    totalSellCosts +
+    finIntercept +
+    (ov?.buyClosing ?? 0);
 
   // profit(P) = ARV - a*P - b >= desiredProfit  =>  P <= (ARV - desiredProfit - b) / a
   if (a <= 0) return 0;
