@@ -11,9 +11,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { defaultDealInputs, type Deal, type DealInputs } from "@shared/schema";
+import {
+  defaultDealInputs,
+  type Deal,
+  type DealInputs,
+  type SourcesUsesOverrides,
+} from "@shared/schema";
 import { HOLDING_PERIOD_OPTIONS } from "./QuickWizard";
-import { calculateDeal, fmtUSD, fmtPct } from "@/lib/calc";
+import { calculateDeal, fmtUSD, fmtPct, type LocaleHint } from "@/lib/calc";
+import type { LineItem } from "@/lib/closingCosts";
 import { MapPreview } from "@/components/MapPreview";
 import { SiteIntelligence } from "@/components/SiteIntelligence";
 import { PropertyProfile } from "@/components/PropertyProfile";
@@ -104,6 +110,9 @@ export default function QuickResult() {
 
   const [emailOpen, setEmailOpen] = useState(false);
   const [budgetOpen, setBudgetOpen] = useState(false);
+  // Set while the Sources & Uses card holds uncommitted edits, so the Home
+  // button (a plain navigate(), not an anchor) can confirm before leaving.
+  const [sourcesUsesDirty, setSourcesUsesDirty] = useState(false);
   const { toast } = useToast();
 
   if (isLoading || !deal) {
@@ -130,7 +139,10 @@ export default function QuickResult() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => navigate("/")}
+          onClick={() => {
+            if (sourcesUsesDirty && !window.confirm("Discard changes?")) return;
+            navigate("/");
+          }}
           data-testid="button-home"
           className="-ml-3"
         >
@@ -477,17 +489,14 @@ export default function QuickResult() {
 
       {/* Sources & uses + map (asymmetric: 3/5 + 2/5) */}
       <div className="grid gap-5 lg:grid-cols-5 mb-8">
-        <Card className="lg:col-span-3">
-          <CardContent className="p-6">
-            <div className="flex items-baseline justify-between mb-1">
-              <h3 className="font-display text-base font-semibold tracking-tight">Where the money goes</h3>
-              <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                Sources · Uses
-              </span>
-            </div>
-            <Breakdown inputs={inputs} r={r} />
-          </CardContent>
-        </Card>
+        <SourcesUsesCard
+          className="lg:col-span-3"
+          inputs={inputs}
+          locale={{ state: deal.state, city: deal.city }}
+          isSaving={updateDeal.isPending}
+          onSave={(next) => updateDeal.mutate({ inputs: next })}
+          onDirtyChange={setSourcesUsesDirty}
+        />
         <Card className="lg:col-span-2 overflow-hidden">
           {deal.lat && deal.lon ? (
             <MapPreview lat={deal.lat} lon={deal.lon} />
@@ -1419,159 +1428,361 @@ function Verdict({
   );
 }
 
-function Breakdown({
+// The seven cost rows of the Sources & Uses card, keyed so an edit knows where
+// to write itself back into the deal inputs.
+type SourcesUsesRowKey =
+  | "purchase"
+  | "rehab"
+  | "buyClosing"
+  | "financing"
+  | "holding"
+  | "sellClosing"
+  | "commission";
+
+const clampMoney = (n: number) => Math.max(0, n);
+const clampPct = (n: number) => Math.min(100, Math.max(0, n));
+
+const fmtRowPct = (n: number) =>
+  Number.isFinite(n) ? `${Number.isInteger(n) ? n : n.toFixed(1)}%` : "—";
+
+// Purchase price and rehab feed the financing and closing-cost formulas, so they
+// write to their primitive input and let every dependent row re-derive. The five
+// terminal cost rows have no single input behind them (locale closing costs and
+// financing are each a sum of parts), so they pin to an override instead — which
+// is also what makes a manually edited row survive a later purchase-price edit.
+function applySourcesUsesAmount(
+  i: DealInputs,
+  key: SourcesUsesRowKey,
+  amount: number,
+): DealInputs {
+  const value = clampMoney(amount);
+  const ov: SourcesUsesOverrides = { ...(i.sourcesUsesOverrides ?? {}) };
+  switch (key) {
+    case "purchase":
+      return { ...i, purchasePrice: value };
+    case "rehab":
+      // Back out the contingency so the buffer keeps its meaning.
+      return { ...i, rehabBudget: value / (1 + (i.rehabContingencyPct || 0) / 100) };
+    case "buyClosing":
+      delete ov.buyClosingItems;
+      ov.buyClosing = value;
+      break;
+    case "financing":
+      ov.financing = value;
+      break;
+    case "holding":
+      ov.holding = value;
+      break;
+    case "sellClosing":
+      delete ov.sellClosingItems;
+      ov.sellClosing = value;
+      break;
+    case "commission":
+      ov.agentCommission = value;
+      break;
+  }
+  return { ...i, sourcesUsesOverrides: ov };
+}
+
+// Editing a closing-cost line item re-derives the parent row from its items, so
+// any pinned parent figure is dropped to keep the two consistent.
+function applyClosingItemAmount(
+  i: DealInputs,
+  side: "buy" | "sell",
+  label: string,
+  amount: number,
+): DealInputs {
+  const ov: SourcesUsesOverrides = { ...(i.sourcesUsesOverrides ?? {}) };
+  const value = clampMoney(amount);
+  if (side === "buy") {
+    ov.buyClosingItems = { ...(ov.buyClosingItems ?? {}), [label]: value };
+    delete ov.buyClosing;
+  } else {
+    ov.sellClosingItems = { ...(ov.sellClosingItems ?? {}), [label]: value };
+    delete ov.sellClosing;
+  }
+  return { ...i, sourcesUsesOverrides: ov };
+}
+
+function SourcesUsesCard({
   inputs,
-  r,
+  locale,
+  isSaving,
+  onSave,
+  onDirtyChange,
+  className,
 }: {
   inputs: DealInputs;
-  r: ReturnType<typeof calculateDeal>;
+  locale: LocaleHint;
+  isSaving: boolean;
+  onSave: (next: DealInputs) => void;
+  onDirtyChange: (dirty: boolean) => void;
+  className?: string;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<DealInputs>(inputs);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // Every number on the card — rows, bar, totals — comes from one pass of the
+  // real deal engine, so an edit recalculates exactly what a reload would.
+  const active = editing ? draft : inputs;
+  const r = calculateDeal(active, locale);
+  const dirty = editing && JSON.stringify(draft) !== JSON.stringify(inputs);
+
+  useEffect(() => {
+    onDirtyChange(dirty);
+  }, [dirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    // Wouter navigates through real anchors, so a capture-phase listener can
+    // still stop an in-app route change while edits are pending.
+    const onClickCapture = (e: MouseEvent) => {
+      const link = (e.target as HTMLElement | null)?.closest?.("a[href]");
+      if (!link || cardRef.current?.contains(link)) return;
+      if (window.confirm("Discard changes?")) {
+        setEditing(false);
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    document.addEventListener("click", onClickCapture, true);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("click", onClickCapture, true);
+    };
+  }, [dirty]);
+
+  const commitAmount = (key: SourcesUsesRowKey, amount: number) =>
+    setDraft((d) => applySourcesUsesAmount(d, key, amount));
+  // A percent is always read against ARV, which is fixed while editing — so the
+  // value round-trips (type 24% and the row still reads 24%).
+  const commitPct = (key: SourcesUsesRowKey, p: number) =>
+    setDraft((d) => applySourcesUsesAmount(d, key, (clampPct(p) / 100) * d.arv));
+  const commitItem = (side: "buy" | "sell", label: string, amount: number) =>
+    setDraft((d) => applyClosingItemAmount(d, side, label, amount));
+
   // Agent commission split out so the expandable "Closing costs (sale)" only
   // contains the closing-cost line items (not commission).
   const sellClosingTotal = r.totalSellCosts - r.agentCommission;
-
   const cc = r.closingCosts;
-  const buyItems = cc?.buy.items ?? [];
-  const sellItems = cc?.sell.items ?? [];
 
-  type Row =
-    | { kind: "flat"; label: string; value: number; tone: SegmentTone }
-    | {
-        kind: "expandable";
-        label: string;
-        value: number;
-        tone: SegmentTone;
-        items: { label: string; amount: number; note?: string }[];
-        emptyHint?: string;
-      };
-
-  const rows: Row[] = [
-    { kind: "flat", label: "Purchase price", value: inputs.purchasePrice, tone: "primary" },
-    { kind: "flat", label: "Rehab + 10% buffer", value: r.totalRehab, tone: "rehab" },
+  const rows: {
+    key: SourcesUsesRowKey;
+    label: string;
+    value: number;
+    tone: SegmentTone;
+    items?: LineItem[];
+    side?: "buy" | "sell";
+  }[] = [
+    { key: "purchase", label: "Purchase price", value: active.purchasePrice, tone: "primary" },
     {
-      kind: "expandable",
+      key: "rehab",
+      label: `Rehab + ${Math.round(active.rehabContingencyPct || 0)}% buffer`,
+      value: r.totalRehab,
+      tone: "rehab",
+    },
+    {
+      key: "buyClosing",
       label: "Closing costs (purchase)",
       value: r.buyClosing,
       tone: "buy-close",
-      items: buyItems,
-      emptyHint: "Add a state to see the local breakdown.",
+      items: cc?.buy.items,
+      side: "buy",
     },
-    { kind: "flat", label: "Financing", value: r.totalFinancingCost, tone: "financing" },
-    { kind: "flat", label: "Holding", value: r.totalHoldingCost, tone: "holding" },
+    { key: "financing", label: "Financing", value: r.totalFinancingCost, tone: "financing" },
+    { key: "holding", label: "Holding", value: r.totalHoldingCost, tone: "holding" },
     {
-      kind: "expandable",
+      key: "sellClosing",
       label: "Closing costs (sale)",
       value: sellClosingTotal,
       tone: "sell-close",
-      items: sellItems,
-      emptyHint: "Add a state to see the local breakdown.",
+      items: cc?.sell.items,
+      side: "sell",
     },
-    { kind: "flat", label: "Agent commission", value: r.agentCommission, tone: "commission" },
+    { key: "commission", label: "Agent commission", value: r.agentCommission, tone: "commission" },
   ];
+
   const total = r.totalProjectCost;
-  const arv = inputs.arv;
+  const arv = active.arv;
   // Profit segment for the bar (only shown when arv > total).
   const profit = Math.max(0, arv - total);
   const denom = Math.max(arv, total);
 
   return (
-    <div>
-      {/* Stacked horizontal flow bar — the distinctive dataviz: cost segments, then profit. */}
-      <div className="mb-5">
-        <div className="flex items-baseline justify-between text-[10.5px] font-semibold uppercase tracking-[0.16em] text-muted-foreground mb-2">
-          <span>Project cost → ARV</span>
-          <span className="tabular-nums text-foreground">
-            {fmtUSD(total)} <span className="text-muted-foreground">/</span> {fmtUSD(arv)}
+    <Card
+      ref={cardRef}
+      className={className}
+      style={editing ? { border: "1px solid rgba(94, 212, 231, 0.4)" } : undefined}
+    >
+      <CardContent className="p-6">
+        <div className="flex items-baseline justify-between gap-2 mb-1">
+          <h3 className="font-display text-base font-semibold tracking-tight">Where the money goes</h3>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Sources · Uses
+            </span>
+            {!editing && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDraft(inputs);
+                  setEditing(true);
+                }}
+                className="inline-flex h-10 w-10 -my-1.5 -mr-2.5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                aria-label="Edit sources and uses"
+                data-testid="button-edit-sources-uses"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {editing && (
+          <p className="text-[11px] text-muted-foreground mb-3">
+            Tap any % or $ to edit. Percentages are of ARV; the totals below are computed.
+          </p>
+        )}
+
+        {total > arv && (
+          <div
+            className="mb-3 flex items-start gap-2 rounded-md px-2.5 py-2 text-[11px] font-medium"
+            style={{
+              color: "#e56666",
+              backgroundColor: "rgba(229, 102, 102, 0.12)",
+              border: "1px solid rgba(229, 102, 102, 0.35)",
+            }}
+            data-testid="banner-costs-exceed-arv"
+          >
+            <span aria-hidden>⚠</span>
+            <span>Total costs exceed ARV — profit is negative.</span>
+          </div>
+        )}
+
+        {/* Stacked horizontal flow bar — the distinctive dataviz: cost segments, then profit. */}
+        <div className="mb-5">
+          <div className="flex items-baseline justify-between text-[10.5px] font-semibold uppercase tracking-[0.16em] text-muted-foreground mb-2">
+            <span>Project cost → ARV</span>
+            <span className="tabular-nums text-foreground">
+              {fmtUSD(total)} <span className="text-muted-foreground">/</span> {fmtUSD(arv)}
+            </span>
+          </div>
+          <div className="h-3 w-full rounded-full bg-secondary overflow-hidden flex">
+            {rows.map((row, i) => {
+              const pct = denom > 0 ? (row.value / denom) * 100 : 0;
+              return (
+                <motion.div
+                  key={row.key}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${pct}%` }}
+                  transition={
+                    editing
+                      ? { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
+                      : { duration: 0.7, delay: 0.1 + i * 0.05, ease: [0.22, 1, 0.36, 1] }
+                  }
+                  className={`h-full ${segmentColor(row.tone)}`}
+                  title={`${row.label}: ${fmtUSD(row.value)}`}
+                />
+              );
+            })}
+            {profit > 0 && (
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${(profit / denom) * 100}%` }}
+                transition={
+                  editing
+                    ? { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
+                    : { duration: 0.7, delay: 0.5, ease: [0.22, 1, 0.36, 1] }
+                }
+                className="h-full bg-[hsl(var(--success))]"
+                title={`Net profit: ${fmtUSD(profit)}`}
+              />
+            )}
+          </div>
+          {/* Endpoint labels */}
+          <div className="mt-2 flex items-baseline justify-between text-[11px]">
+            <span className="text-muted-foreground">Costs</span>
+            {profit > 0 && (
+              <span className="font-medium text-[hsl(var(--success))] tabular-nums">
+                + {fmtUSD(profit)} profit
+              </span>
+            )}
+          </div>
+        </div>
+
+        {cc && (
+          <p className="text-[11px] text-muted-foreground mb-3">
+            {cc.stateName} ({cc.sourceState}) rates · tap a row for itemized closing costs.
+          </p>
+        )}
+        <ul className="space-y-2">
+          {rows.map(({ key, label, value, tone, items, side }) => (
+            <SourcesUsesRow
+              key={key}
+              label={label}
+              value={value}
+              pct={arv > 0 ? (value / arv) * 100 : 0}
+              tone={tone}
+              items={items}
+              editing={editing}
+              testKey={key}
+              onCommitPct={(p) => commitPct(key, p)}
+              onCommitAmount={(v) => commitAmount(key, v)}
+              onCommitItem={
+                side ? (itemLabel, v) => commitItem(side, itemLabel, v) : undefined
+              }
+            />
+          ))}
+        </ul>
+        <div className="mt-4 pt-4 border-t border-card-border flex items-baseline justify-between">
+          <span className="text-sm font-semibold">Total project cost</span>
+          <span className="font-display text-base font-semibold tabular-nums">
+            {fmtUSD(total)}
           </span>
         </div>
-        <div className="h-3 w-full rounded-full bg-secondary overflow-hidden flex">
-          {rows.map((row, i) => {
-            const pct = denom > 0 ? (row.value / denom) * 100 : 0;
-            return (
-              <motion.div
-                key={row.label}
-                initial={{ width: 0 }}
-                animate={{ width: `${pct}%` }}
-                transition={{ duration: 0.7, delay: 0.1 + i * 0.05, ease: [0.22, 1, 0.36, 1] }}
-                className={`h-full ${segmentColor(row.tone)}`}
-                title={`${row.label}: ${fmtUSD(row.value)}`}
-              />
-            );
-          })}
-          {profit > 0 && (
-            <motion.div
-              initial={{ width: 0 }}
-              animate={{ width: `${(profit / denom) * 100}%` }}
-              transition={{ duration: 0.7, delay: 0.5, ease: [0.22, 1, 0.36, 1] }}
-              className="h-full bg-[hsl(var(--success))]"
-              title={`Net profit: ${fmtUSD(profit)}`}
-            />
-          )}
+        <div className="mt-2 flex items-baseline justify-between">
+          <span className="text-sm text-muted-foreground">After Repair Value</span>
+          <span className="text-sm font-medium tabular-nums">{fmtUSD(arv)}</span>
         </div>
-        {/* Endpoint labels */}
-        <div className="mt-2 flex items-baseline justify-between text-[11px]">
-          <span className="text-muted-foreground">Costs</span>
-          {profit > 0 && (
-            <span className="font-medium text-[hsl(var(--success))] tabular-nums">
-              + {fmtUSD(profit)} profit
-            </span>
-          )}
-        </div>
-      </div>
 
-      {cc && (
-        <p className="text-[11px] text-muted-foreground mb-3">
-          {cc.stateName} ({cc.sourceState}) rates · tap a row for itemized closing costs.
-        </p>
-      )}
-      <ul className="space-y-2">
-        {rows.map((row) => {
-          const pct = total > 0 ? (row.value / total) * 100 : 0;
-          if (row.kind === "flat") {
-            return (
-              <li key={row.label} className="flex items-center gap-3 py-1.5">
-                <span
-                  className={`h-2.5 w-2.5 rounded-sm shrink-0 ${segmentColor(row.tone)}`}
-                  aria-hidden
-                />
-                <span className="text-sm text-muted-foreground flex-1 min-w-0 truncate">
-                  {row.label}
-                </span>
-                <span className="text-[11px] tabular-nums text-muted-foreground/70 w-10 text-right">
-                  {pct.toFixed(0)}%
-                </span>
-                <span className="text-sm tabular-nums font-medium w-20 text-right">
-                  {fmtUSD(row.value)}
-                </span>
-              </li>
-            );
-          }
-          return (
-            <ExpandableRow
-              key={row.label}
-              label={row.label}
-              value={row.value}
-              pct={pct}
-              tone={row.tone}
-              items={row.items}
-              emptyHint={row.emptyHint}
-            />
-          );
-        })}
-      </ul>
-      <div className="mt-4 pt-4 border-t border-card-border flex items-baseline justify-between">
-        <span className="text-sm font-semibold">Total project cost</span>
-        <span className="font-display text-base font-semibold tabular-nums">
-          {fmtUSD(total)}
-        </span>
-      </div>
-      <div className="mt-2 flex items-baseline justify-between">
-        <span className="text-sm text-muted-foreground">After Repair Value</span>
-        <span className="text-sm font-medium tabular-nums">
-          {fmtUSD(inputs.arv)}
-        </span>
-      </div>
-    </div>
+        {editing && (
+          <div className="mt-5 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                onSave(draft);
+                setEditing(false);
+              }}
+              disabled={isSaving}
+              className="flex-1 py-2.5 rounded-lg text-sm font-semibold transition-opacity hover:opacity-90 disabled:opacity-60"
+              style={{ backgroundColor: "#f5c948", color: "#0a0e12" }}
+              data-testid="button-save-sources-uses"
+            >
+              {isSaving ? "Saving…" : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(inputs);
+                setEditing(false);
+              }}
+              className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-foreground/80 transition-colors hover:text-foreground"
+              style={{ border: "1px solid rgba(94, 212, 231, 0.4)" }}
+              data-testid="button-cancel-sources-uses"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1604,54 +1815,75 @@ function segmentColor(tone: SegmentTone): string {
   }
 }
 
-function ExpandableRow({
+function SourcesUsesRow({
   label,
   value,
   pct,
   tone,
   items,
-  emptyHint,
+  editing,
+  testKey,
+  onCommitPct,
+  onCommitAmount,
+  onCommitItem,
 }: {
   label: string;
   value: number;
   pct: number;
   tone: SegmentTone;
-  items: { label: string; amount: number; note?: string }[];
-  emptyHint?: string;
+  items?: LineItem[];
+  editing: boolean;
+  testKey: string;
+  onCommitPct: (p: number) => void;
+  onCommitAmount: (v: number) => void;
+  onCommitItem?: (label: string, v: number) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const hasItems = items.length > 0;
+  const hasItems = (items?.length ?? 0) > 0;
   return (
     <li>
-      <button
-        type="button"
-        onClick={() => hasItems && setOpen((v) => !v)}
-        disabled={!hasItems}
-        className={`w-full flex items-center gap-3 py-1.5 text-left ${
-          hasItems ? "hover:text-foreground transition-colors cursor-pointer" : "cursor-default"
-        }`}
-        aria-expanded={open}
-        data-testid={`button-expand-${label.replace(/\s+/g, "-").toLowerCase()}`}
-      >
+      <div className="flex items-center gap-3 py-1.5">
         <span
           className={`h-2.5 w-2.5 rounded-sm shrink-0 ${segmentColor(tone)}`}
           aria-hidden
         />
-        <span className="text-sm text-muted-foreground flex-1 min-w-0 flex items-center gap-1 truncate">
-          {label}
-          {hasItems && (
+        {hasItems ? (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="text-sm text-muted-foreground flex-1 min-w-0 flex items-center gap-1 truncate text-left transition-colors hover:text-foreground"
+            aria-expanded={open}
+            data-testid={`button-expand-${testKey}`}
+          >
+            {label}
             <ChevronRight
               className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
             />
-          )}
-        </span>
-        <span className="text-[11px] tabular-nums text-muted-foreground/70 w-10 text-right">
-          {pct.toFixed(0)}%
-        </span>
-        <span className="text-sm tabular-nums font-medium w-20 text-right">
-          {fmtUSD(value)}
-        </span>
-      </button>
+          </button>
+        ) : (
+          <span className="text-sm text-muted-foreground flex-1 min-w-0 truncate">
+            {label}
+          </span>
+        )}
+        <EditableNumber
+          value={pct}
+          kind="percent"
+          editable={editing}
+          onCommit={onCommitPct}
+          ariaLabel={`${label} — percent of ARV`}
+          className="w-14 text-right text-[11px] tabular-nums text-muted-foreground/70"
+          testId={`input-pct-${testKey}`}
+        />
+        <EditableNumber
+          value={value}
+          kind="money"
+          editable={editing}
+          onCommit={onCommitAmount}
+          ariaLabel={`${label} — amount`}
+          className="w-24 text-right text-sm tabular-nums font-medium"
+          testId={`input-amount-${testKey}`}
+        />
+      </div>
       {open && hasItems && (
         <motion.ul
           initial={{ opacity: 0, y: -4 }}
@@ -1659,7 +1891,7 @@ function ExpandableRow({
           transition={{ duration: 0.15 }}
           className="mt-1 ml-5 pl-3 border-l border-card-border space-y-1.5 text-xs pb-2"
         >
-          {items.map((it) => (
+          {(items ?? []).map((it) => (
             <li key={it.label} className="flex items-baseline justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-foreground/80">{it.label}</div>
@@ -1669,15 +1901,102 @@ function ExpandableRow({
                   </div>
                 )}
               </div>
-              <span className="tabular-nums text-foreground/70 shrink-0">{fmtUSD(it.amount)}</span>
+              <EditableNumber
+                value={it.amount}
+                kind="money"
+                editable={editing && !!onCommitItem}
+                onCommit={(v) => onCommitItem?.(it.label, v)}
+                ariaLabel={`${it.label} — amount`}
+                className="shrink-0 text-right tabular-nums text-foreground/70"
+                testId={`input-item-${testKey}-${it.label.replace(/\s+/g, "-").toLowerCase()}`}
+              />
             </li>
           ))}
         </motion.ul>
       )}
-      {open && !hasItems && emptyHint && (
-        <p className="mt-2 ml-5 text-xs text-muted-foreground">{emptyHint}</p>
-      )}
     </li>
+  );
+}
+
+// Tap-to-edit number, mirroring the What-If slider's inline editor: tap swaps the
+// label for a numeric input, blur/Enter commits, Escape reverts.
+function EditableNumber({
+  value,
+  kind,
+  editable,
+  onCommit,
+  ariaLabel,
+  className,
+  testId,
+}: {
+  value: number;
+  kind: "money" | "percent";
+  editable: boolean;
+  onCommit: (v: number) => void;
+  ariaLabel: string;
+  className?: string;
+  testId?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const text = kind === "money" ? fmtUSD(value) : fmtRowPct(value);
+
+  if (!editable) return <span className={className}>{text}</span>;
+
+  if (editing) {
+    const commit = () => {
+      setEditing(false);
+      // Strip $, %, commas and whitespace before parsing.
+      const cleaned = draft.replace(/[$%,\s]/g, "");
+      if (cleaned === "") {
+        onCommit(0);
+        return;
+      }
+      const parsed = parseFloat(cleaned);
+      if (!Number.isFinite(parsed)) return; // invalid → keep the previous value
+      onCommit(kind === "money" ? clampMoney(parsed) : clampPct(parsed));
+    };
+    return (
+      <input
+        ref={inputRef}
+        inputMode="decimal"
+        defaultValue={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          else if (e.key === "Escape") setEditing(false);
+        }}
+        aria-label={ariaLabel}
+        className={`${className ?? ""} rounded-md bg-card/60 px-1.5 py-0.5 outline-none focus:border-accent`}
+        style={{ border: "1px solid rgba(94, 212, 231, 0.4)" }}
+        data-testid={testId}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setDraft(
+          kind === "money" ? String(Math.round(value)) : String(Number(value.toFixed(1))),
+        );
+        setEditing(true);
+      }}
+      aria-label={ariaLabel}
+      className={`${className ?? ""} rounded-md underline decoration-dotted underline-offset-2 transition-colors hover:bg-muted/40`}
+      style={{ textDecorationColor: "rgba(94, 212, 231, 0.6)" }}
+      data-testid={testId}
+    >
+      {text}
+    </button>
   );
 }
 

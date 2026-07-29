@@ -3,6 +3,17 @@
 All notable changes to PropBoxIQ are documented here. This project follows
 [semantic versioning](https://semver.org/).
 
+## [1.7.3] — 2026-07-28
+### Added
+- Sources & Uses card now supports Edit Mode: tap the pencil to make every % and $ editable
+- Changes recalculate live — bar chart, total project cost, and profit all update as you type
+- Itemized closing-cost sub-rows are editable too; the parent row re-totals from its items
+- Save persists changes to the deal; Cancel discards
+- Warning banner when total costs exceed ARV
+
+### Changed
+- Row percentages in the Sources & Uses card are now a share of ARV (they were a share of total project cost), matching the card's `Project cost → ARV` bar
+
 ## [1.7.2] — 2026-07-22
 ### Changed
 - Comp ranking now prioritizes SAME CITY, then SAME ZIP, above raw price

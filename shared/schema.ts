@@ -115,6 +115,25 @@ export const dealSnapshots = sqliteTable("deal_snapshots", {
 export type DealSnapshot = typeof dealSnapshots.$inferSelect;
 export type InsertDealSnapshot = typeof dealSnapshots.$inferInsert;
 
+// Manual per-row edits made in the "Where the money goes" (Sources & Uses)
+// card. Only the terminal cost rows appear here: purchase price and rehab write
+// straight back to their primitive inputs so the formulas that depend on them
+// keep cascading. A row present in this object is pinned to the user's figure;
+// an absent row still follows its formula.
+export const sourcesUsesOverridesSchema = z.object({
+  buyClosing: z.number().nonnegative().optional(),
+  financing: z.number().nonnegative().optional(),
+  holding: z.number().nonnegative().optional(),
+  sellClosing: z.number().nonnegative().optional(),
+  agentCommission: z.number().nonnegative().optional(),
+  // Itemized closing-cost edits, keyed by line-item label. When present the
+  // parent row is re-derived from its items rather than pinned.
+  buyClosingItems: z.record(z.string(), z.number().nonnegative()).optional(),
+  sellClosingItems: z.record(z.string(), z.number().nonnegative()).optional(),
+});
+
+export type SourcesUsesOverrides = z.infer<typeof sourcesUsesOverridesSchema>;
+
 // Zod schema for the runtime inputs object stored as JSON in `inputs`
 export const dealInputsSchema = z.object({
   purchasePrice: z.number().nonnegative(),
@@ -147,6 +166,7 @@ export const dealInputsSchema = z.object({
   // Lot size from RentCast property lookup (display only)
   lotSqft: z.number().nonnegative().optional(),
   lotAcres: z.number().nonnegative().optional(),
+  sourcesUsesOverrides: sourcesUsesOverridesSchema.optional(),
 });
 
 export type DealInputs = z.infer<typeof dealInputsSchema>;
