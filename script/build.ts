@@ -1,6 +1,6 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile } from "node:fs/promises";
+import { rm, readFile, mkdir, cp } from "node:fs/promises";
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
@@ -57,6 +57,13 @@ async function buildAll() {
     external: externals,
     logLevel: "info",
   });
+
+  // Copy self-hosted PDF fonts (Playfair Display + Inter .woff2 files) next
+  // to the bundle so server/pdf/fonts.ts's runtime path resolution
+  // (relative to the compiled dist/index.cjs) finds them in production.
+  console.log("copying pdf fonts...");
+  await mkdir("dist/pdf/fonts", { recursive: true });
+  await cp("server/pdf/fonts", "dist/pdf/fonts", { recursive: true });
 }
 
 buildAll().catch((err) => {

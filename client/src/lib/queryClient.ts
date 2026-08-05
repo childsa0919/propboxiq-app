@@ -24,7 +24,10 @@ function resolveApiBase(): string {
   return "";
 }
 
-const API_BASE = resolveApiBase();
+// Exported (v1.7.5) so callers that need a raw fetch() with credentials but
+// a non-JSON response body (e.g. the Comp Hero PDF export, which downloads
+// an application/pdf blob) can still resolve the correct API origin.
+export const API_BASE = resolveApiBase();
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {

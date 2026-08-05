@@ -3,6 +3,20 @@
 All notable changes to PropBoxIQ are documented here. This project follows
 [semantic versioning](https://semver.org/).
 
+## [1.7.5] — 2026-08-04
+### Changed
+- Comp Hero PDF export completely redesigned to look institutional (Marcus & Millichap / JLL-style offering memorandum), replacing v1.7.4's minimal solid-teal-band + text-list layout
+- Export pipeline moved from client-side jsPDF to a server-side Puppeteer HTML→PDF render (`GET /api/deals/:id/comp-hero/pdf`), enabling real CSS typography instead of an imperative-API approximation of it
+- New palette exclusive to the PDF: cream paper (#faf8f3) + muted gold (#a68a3f) + charcoal ink — distinct from the app UI's Coastal Teal, which is unchanged
+- Typography: Playfair Display (serif, titles/ARV/addresses) + Inter (sans, body/labels), both self-hosted as base64-embedded fonts so the PDF never depends on a live font CDN at render time
+
+### Added
+- Comp photo grid: each comp card now shows a photo (real photo for manual comps when available, neutral cream placeholder with a gold house icon otherwise — including when a photo URL is stale/unreachable)
+- $/sqft bar chart (inline SVG) with a dashed subject-line overlay and per-bar data labels
+- Comparable location map: static map image (Mapbox or Google Static Maps, whichever API key is configured) with an SVG sketch-map fallback when neither key is present, so the PDF never crashes or ships a blank panel
+- Footer with pipe-separated data-source attribution, prepared date, page number, and an appraisal disclaimer
+- Adaptive pagination: 1 page for ≤4 comps, 2 pages for 5–8 comps (page 2 continues the comp grid, then the chart/map/footer)
+
 ## [1.7.4] — 2026-08-04
 ### Added
 - New Comp Hero view (`/deal/:id/comp-hero`): a dedicated, shareable, print-ready comparable-property analysis screen

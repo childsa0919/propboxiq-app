@@ -26,6 +26,7 @@ import {
   type CompHeroCardData,
 } from "./types";
 import { exportCompHeroPdf } from "@/lib/compHeroPdf";
+import { API_BASE } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 
@@ -185,10 +186,40 @@ export default function CompHeroPage() {
     waterSewerLabel: null,
   };
 
-  const handleExportPdf = () => {
+  // v1.7.5: the institutional PDF is rendered server-side via Puppeteer
+  // (server/pdf/compHeroPdf.ts) so it can use real CSS typography (Playfair
+  // Display small caps, hairline gold rules) that jsPDF's imperative API
+  // could not deliver. The client's job is now just: hit the endpoint,
+  // download the returned application/pdf blob. The old client-side jsPDF
+  // path (client/src/lib/compHeroPdf.ts) is kept only as a fallback if the
+  // server render fails (e.g. transient Puppeteer/Chromium launch error),
+  // so export never fully breaks.
+  const handleExportPdf = async () => {
     if (!deal) return;
     setExporting(true);
     try {
+      const res = await fetch(`${API_BASE}/api/deals/${dealId}/comp-hero/pdf`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`PDF export failed (${res.status})`);
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") ?? "";
+      const match = disposition.match(/filename="?([^";]+)"?/);
+      const filename = match?.[1] ?? `PropBoxIQ_CompHero_${deal.id}.pdf`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("[comp-hero] server PDF export failed, falling back to client render:", e);
+      toast({
+        title: "Using basic PDF export",
+        description: "The institutional export is temporarily unavailable.",
+      });
       exportCompHeroPdf({
         deal,
         subjectAddress: deal.address,
