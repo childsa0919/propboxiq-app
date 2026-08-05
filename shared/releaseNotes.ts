@@ -12,6 +12,18 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.7.6",
+    date: "2026-08-04",
+    changed: [
+      "Comp Hero PDF: real static map via Mapbox (light theme, matches institutional aesthetic)",
+      "Comp Hero PDF: text-only comp cards (photos removed - cleaner, more institutional read)",
+      "Comp Hero PDF: tighter adaptive layout, no more orphaned pages",
+      "Comp Hero PDF: institutional footer with data sources, timestamp, page number, and disclaimer",
+      "Comp Hero PDF: bar chart label overlap fixed, KPI row underlines removed",
+    ],
+    added: ["MAPBOX_ACCESS_TOKEN env var (optional, PDF gracefully falls back to SVG map)"],
+  },
+  {
     version: "1.7.5",
     date: "2026-08-04",
     changed: [

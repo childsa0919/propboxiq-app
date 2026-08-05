@@ -3,6 +3,16 @@
 All notable changes to PropBoxIQ are documented here. This project follows
 [semantic versioning](https://semver.org/).
 
+## [1.7.6] — 2026-08-04
+### Changed
+- Comp Hero PDF: real static map via Mapbox (light theme, matches institutional aesthetic)
+- Comp Hero PDF: text-only comp cards (photos removed — cleaner, more institutional read)
+- Comp Hero PDF: tighter adaptive layout, no more orphaned pages
+- Comp Hero PDF: institutional footer with data sources, timestamp, page number, and disclaimer
+- Comp Hero PDF: bar chart label overlap fixed, KPI row underlines removed
+### Added
+- MAPBOX_ACCESS_TOKEN env var (optional, PDF gracefully falls back to SVG map)
+
 ## [1.7.5] — 2026-08-04
 ### Changed
 - Comp Hero PDF export completely redesigned to look institutional (Marcus & Millichap / JLL-style offering memorandum), replacing v1.7.4's minimal solid-teal-band + text-list layout
