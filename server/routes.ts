@@ -36,6 +36,8 @@ import {
 } from "./rentcast";
 import { enrichComp, enrichComps } from "./compEnrich";
 import { computeArvFromComps } from "@shared/arv";
+import { resolveManualComp } from "./compHeroManual";
+import { compHeroStateBodySchema, manualCompSchema, type ManualComp } from "@shared/schema";
 import {
   stylesMatch,
   citiesMatch,
@@ -1991,6 +1993,132 @@ export async function registerRoutes(
     if (result === "is_original") {
       return res.status(403).json({ error: "The original snapshot cannot be deleted" });
     }
+    res.status(204).end();
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Comp Hero (v1.7.4) — per-deal selection state + manual comps for the
+  // dedicated /deal/:id/comp-hero view. Comp Hero READS the tier-ranked comps
+  // from /api/comps; it never mutates comp tier ranking (PR #29) or the main
+  // deal's ARV. All rows are scoped through the same requireAuth + getDeal
+  // ownership check used by every other per-deal sub-route.
+  // ──────────────────────────────────────────────────────────────────────
+
+  function parseCompHeroRow(row: { selectedCompKeys: string; manualComps: string } | undefined) {
+    let selectedCompKeys: string[] = [];
+    let manualComps: ManualComp[] = [];
+    if (row) {
+      try {
+        const parsed = JSON.parse(row.selectedCompKeys);
+        if (Array.isArray(parsed)) selectedCompKeys = parsed.filter((x) => typeof x === "string");
+      } catch {
+        /* default to [] */
+      }
+      try {
+        const parsed = JSON.parse(row.manualComps);
+        if (Array.isArray(parsed)) {
+          manualComps = parsed.filter(
+            (x): x is ManualComp => manualCompSchema.safeParse(x).success,
+          );
+        }
+      } catch {
+        /* default to [] */
+      }
+    }
+    return { selectedCompKeys, manualComps };
+  }
+
+  // GET /api/deals/:id/comp-hero — current selection + manual comps, or
+  // empty defaults if the deal has never opened Comp Hero.
+  app.get("/api/deals/:id/comp-hero", requireAuth, async (req, res) => {
+    const userId = (req as any).userId as number;
+    const dealId = Number(req.params.id);
+    const deal = await storage.getDeal(dealId, userId);
+    if (!deal) return res.status(404).json({ error: "Not found" });
+    const row = await storage.getCompHeroState(dealId);
+    res.json(parseCompHeroRow(row));
+  });
+
+  // PATCH /api/deals/:id/comp-hero — upsert selection state and/or manual
+  // comps. Accepts a partial body; either field may be omitted.
+  app.patch("/api/deals/:id/comp-hero", requireAuth, async (req, res) => {
+    const userId = (req as any).userId as number;
+    const dealId = Number(req.params.id);
+    const deal = await storage.getDeal(dealId, userId);
+    if (!deal) return res.status(404).json({ error: "Not found" });
+
+    const parsed = compHeroStateBodySchema.partial().safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+
+    const patch: { selectedCompKeys?: string; manualComps?: string } = {};
+    if (parsed.data.selectedCompKeys !== undefined) {
+      patch.selectedCompKeys = JSON.stringify(parsed.data.selectedCompKeys);
+    }
+    if (parsed.data.manualComps !== undefined) {
+      patch.manualComps = JSON.stringify(parsed.data.manualComps);
+    }
+    const row = await storage.upsertCompHeroState(dealId, patch);
+    res.json(parseCompHeroRow(row));
+  });
+
+  // POST /api/deals/:id/comp-hero/manual — resolve a pasted address or
+  // Zillow/Redfin URL into a full manual comp and append it to the deal.
+  app.post("/api/deals/:id/comp-hero/manual", requireAuth, async (req, res) => {
+    const userId = (req as any).userId as number;
+    const dealId = Number(req.params.id);
+    const deal = await storage.getDeal(dealId, userId);
+    if (!deal) return res.status(404).json({ error: "Not found" });
+
+    const input = String(req.body?.input ?? "").trim();
+    if (!input) return res.status(400).json({ error: "input required" });
+
+    let manualComp: ManualComp;
+    try {
+      manualComp = await resolveManualComp(input);
+    } catch (e) {
+      console.error("[comp-hero] manual comp resolution failed:", (e as Error)?.message ?? e);
+      return res.status(502).json({ error: "Could not resolve that address or link. Try again." });
+    }
+
+    const row = await storage.getCompHeroState(dealId);
+    const { selectedCompKeys, manualComps } = parseCompHeroRow(row);
+    manualComps.push(manualComp);
+    // Newly added manual comps default to selected (matches "first visit
+    // selects everything" behavior for auto comps).
+    selectedCompKeys.push(manualComp.id);
+
+    await storage.upsertCompHeroState(dealId, {
+      selectedCompKeys: JSON.stringify(selectedCompKeys),
+      manualComps: JSON.stringify(manualComps),
+    });
+
+    res.status(201).json(manualComp);
+  });
+
+  // DELETE /api/deals/:id/comp-hero/manual/:manualId — remove a manual comp
+  // and drop its id from the selection set if present.
+  app.delete("/api/deals/:id/comp-hero/manual/:manualId", requireAuth, async (req, res) => {
+    const userId = (req as any).userId as number;
+    const dealId = Number(req.params.id);
+    const manualId = String(req.params.manualId);
+    const deal = await storage.getDeal(dealId, userId);
+    if (!deal) return res.status(404).json({ error: "Not found" });
+
+    const row = await storage.getCompHeroState(dealId);
+    const { selectedCompKeys, manualComps } = parseCompHeroRow(row);
+    const nextManualComps = manualComps.filter((c) => c.id !== manualId);
+    if (nextManualComps.length === manualComps.length) {
+      return res.status(404).json({ error: "Manual comp not found" });
+    }
+    const nextSelected = selectedCompKeys.filter((k) => k !== manualId);
+
+    await storage.upsertCompHeroState(dealId, {
+      selectedCompKeys: JSON.stringify(nextSelected),
+      manualComps: JSON.stringify(nextManualComps),
+    });
+
     res.status(204).end();
   });
 

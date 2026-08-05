@@ -17,6 +17,7 @@ import HoldResult from "@/pages/HoldResult";
 import Detailed from "@/pages/Detailed";
 import DealPage from "@/pages/Deal";
 import ComparePage from "@/pages/Compare";
+import CompHeroPage from "@/components/CompHero/CompHeroPage";
 import Deals from "@/pages/Deals";
 import Settings from "@/pages/Settings";
 import Login from "@/pages/Login";
@@ -32,6 +33,7 @@ function AppRouter() {
       <Route path="/hold/result" component={HoldResult} />
       <Route path="/detailed" component={Detailed} />
       <Route path="/deal/:id/compare" component={ComparePage} />
+      <Route path="/deal/:id/comp-hero" component={CompHeroPage} />
       <Route path="/deal/:id" component={DealPage} />
       <Route path="/deals" component={Deals} />
       <Route path="/settings" component={Settings} />
