@@ -37,6 +37,8 @@ import {
 import { enrichComp, enrichComps } from "./compEnrich";
 import { computeArvFromComps } from "@shared/arv";
 import { resolveManualComp } from "./compHeroManual";
+import { renderCompHeroPdfBuffer, type CompHeroPdfComp } from "./pdf/compHeroPdf";
+import { computeStats } from "@/components/CompHero/types";
 import { compHeroStateBodySchema, manualCompSchema, type ManualComp } from "@shared/schema";
 import {
   stylesMatch,
@@ -822,6 +824,11 @@ export async function registerRoutes(
         sqft: subjectSqft,
         city: subjectCity,
         zip: subjectZip,
+        // lat/lon (v1.7.5 addition) — additive only, powers the institutional
+        // Comp Hero PDF's static location map subject pin. Does not touch
+        // tier ranking, ARV selection, or any other PR #29-locked logic.
+        lat: subjectLat,
+        lon: subjectLon,
         style: subjectEnrich.style,
         heatingType: subjectEnrich.heatingType,
         coolingType: subjectEnrich.coolingType,
@@ -2120,6 +2127,123 @@ export async function registerRoutes(
     });
 
     res.status(204).end();
+  });
+
+  // GET /api/deals/:id/comp-hero/pdf — institutional Comp Hero PDF export
+  // (v1.7.5). Server-side Puppeteer HTML→PDF render; replaces the v1.7.4
+  // client-side jsPDF export. Reads the deal, the same tier-ranked comps as
+  // the on-screen Comp Hero view (via an internal call to /api/comps — the
+  // cascading-radius AVM logic that powers it is PR #29-locked and not
+  // duplicated here), and the persisted selection/manual comps, then renders
+  // the same subject+ARV+stats+comp math the client already computes.
+  app.get("/api/deals/:id/comp-hero/pdf", requireAuth, async (req, res) => {
+    const userId = (req as any).userId as number;
+    const dealId = Number(req.params.id);
+    const deal = await storage.getDeal(dealId, userId);
+    if (!deal) return res.status(404).json({ error: "Not found" });
+
+    try {
+      const row = await storage.getCompHeroState(dealId);
+      const { selectedCompKeys, manualComps } = parseCompHeroRow(row);
+
+      // Internal call to the same /api/comps endpoint the Comp Hero page
+      // uses — keeps the cascading-radius AVM + tier-ranking (PR #29) as the
+      // single source of truth instead of re-implementing it here.
+      const proto = req.protocol;
+      const host = req.get("host");
+      const compsUrl = `${proto}://${host}/api/comps?address=${encodeURIComponent(deal.address)}`;
+      const compsRes = await fetch(compsUrl);
+      let compsData: any = null;
+      if (compsRes.ok) {
+        compsData = await compsRes.json();
+      }
+
+      const autoComps: CompHeroPdfComp[] = (compsData?.comps ?? []).map((c: any) => ({
+        key: c.id,
+        isManual: false,
+        address: c.address,
+        city: c.city ?? null,
+        sqft: c.sqft ?? null,
+        beds: c.beds ?? null,
+        baths: c.baths ?? null,
+        soldPrice: c.price ?? null,
+        pricePerSqft: c.pricePerSqft ?? null,
+        style: c.style ?? null,
+        heatingType: c.heatingType ?? null,
+        coolingType: c.coolingType ?? null,
+        hasPool: c.hasPool ?? null,
+        waterSewerLabel: c.waterSewerLabel ?? null,
+        tier: c.tier,
+        photoUrl: null,
+        lat: c.lat ?? null,
+        lon: c.lon ?? null,
+      }));
+      const manualCardData: CompHeroPdfComp[] = manualComps.map((c) => {
+        const pricePerSqft =
+          c.soldPrice != null && c.sqft != null && c.sqft > 0
+            ? Math.round(c.soldPrice / c.sqft)
+            : null;
+        return {
+          key: c.id,
+          isManual: true,
+          address: c.address,
+          city: c.city,
+          sqft: c.sqft,
+          beds: c.beds,
+          baths: c.baths,
+          soldPrice: c.soldPrice,
+          pricePerSqft,
+          style: c.style,
+          heatingType: null,
+          coolingType: null,
+          hasPool: null,
+          waterSewerLabel: null,
+          tier: undefined,
+          photoUrl: c.photoUrl,
+          manualId: c.id,
+          lat: null,
+          lon: null,
+        };
+      });
+
+      const allCards = [...autoComps, ...manualCardData];
+      const selectedSet = new Set(selectedCompKeys);
+      // First-visit default (matches the client): if selection is empty,
+      // treat every comp as selected so an export before any toggling still
+      // shows the full comp set instead of an empty PDF.
+      const selectedCards =
+        selectedSet.size > 0 ? allCards.filter((c) => selectedSet.has(c.key)) : allCards;
+
+      const stats = computeStats(selectedCards);
+
+      const arvSqft = deal.sqft ?? compsData?.subject?.sqft ?? null;
+      const pool = selectedCards
+        .filter((c) => c.soldPrice != null)
+        .map((c) => ({ id: c.key, price: c.soldPrice as number, pricePerSqft: c.pricePerSqft }));
+      const arvResult =
+        pool.length > 0 ? computeArvFromComps(pool, arvSqft, selectedCards.length) : null;
+
+      const { buffer, filename } = await renderCompHeroPdfBuffer({
+        deal,
+        subjectAddress: deal.address,
+        subjectSqft: arvSqft,
+        subjectStyle: compsData?.subject?.style ?? null,
+        subjectLat: compsData?.subject?.lat ?? null,
+        subjectLon: compsData?.subject?.lon ?? null,
+        arv: arvResult?.arv ?? null,
+        arvLow: arvResult?.arvLow ?? null,
+        arvHigh: arvResult?.arvHigh ?? null,
+        stats,
+        selectedComps: selectedCards,
+      });
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(buffer);
+    } catch (e) {
+      console.error("[comp-hero] PDF export failed:", (e as Error)?.message ?? e);
+      res.status(500).json({ error: "Failed to generate PDF" });
+    }
   });
 
   // ──────────────────────────────────────────────────────────────────────
