@@ -47,6 +47,7 @@ import {
   MoreHorizontal,
   GitCompare,
   Trash2,
+  Trophy,
 } from "lucide-react";
 
 export default function DealPage() {
@@ -240,6 +241,12 @@ export default function DealPage() {
                 data-testid="menu-compare"
               >
                 <GitCompare className="h-4 w-4 mr-2" /> Compare snapshots
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => navigate(`/deal/${dealId}/comp-hero`)}
+                data-testid="menu-comp-hero"
+              >
+                <Trophy className="h-4 w-4 mr-2" /> Open Comp Hero
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => exportDealPdf(deal, inputs)} data-testid="menu-export-pdf">
                 <Download className="h-4 w-4 mr-2" /> Export PDF

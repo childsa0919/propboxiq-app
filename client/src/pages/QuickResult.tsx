@@ -46,6 +46,7 @@ import {
   Pencil,
   Mail,
   ClipboardList,
+  Trophy,
 } from "lucide-react";
 import {
   stylesMatch,
@@ -710,6 +711,7 @@ function CompsSection({
   onUpdateNotes: (notes: string | null) => void;
   isSaving: boolean;
 }) {
+  const [, navigate] = useLocation();
   const envelope = parseSavedCompsEnvelope(deal.notes ?? null);
   const data = envelope?.compsData;
 
@@ -834,9 +836,21 @@ function CompsSection({
               Recent sold + active comparables that informed this ARV
             </p>
           </div>
-          <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            {activeComps.length} comps · {radiusLabel}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              {activeComps.length} comps · {radiusLabel}
+            </span>
+            <button
+              type="button"
+              onClick={() => navigate(`/deal/${deal.id}/comp-hero`)}
+              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-opacity hover:opacity-90"
+              style={{ borderColor: "#f5c948", color: "#f5c948", backgroundColor: "rgba(245,201,72,0.08)" }}
+              data-testid="button-comp-hero"
+            >
+              <Trophy className="h-3.5 w-3.5" />
+              Comp Hero
+            </button>
+          </div>
         </div>
 
         {/* Filter transparency strip */}

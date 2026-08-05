@@ -3,6 +3,15 @@
 All notable changes to PropBoxIQ are documented here. This project follows
 [semantic versioning](https://semver.org/).
 
+## [1.7.4] — 2026-08-04
+### Added
+- New Comp Hero view (`/deal/:id/comp-hero`): a dedicated, shareable, print-ready comparable-property analysis screen
+- Check/uncheck any of the 8 comps to control which ones drive the Comp Hero ARV — recomputes live, independent of the main deal's ARV
+- Add manual comps by pasting a plain address or a Zillow/Redfin listing URL; server tries a scrape first, falls back to RentCast enrichment
+- Export the full Comp Hero view to a print-ready PDF (subject band, KPI row, $/sqft chart, comp grid, stats footer)
+- "Comp Hero" entry points added: gold-outlined button on the Comps section header and an "Open Comp Hero" item in the deal actions menu
+- Selection state and manual comps persist per-deal, so the Comp Hero view is reproducible across visits
+
 ## [1.7.3] — 2026-07-28
 ### Added
 - Sources & Uses card now supports Edit Mode: tap the pencil to make every % and $ editable

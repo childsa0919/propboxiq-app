@@ -1,5 +1,5 @@
-import { deals, users, magicTokens, sessions, dealSnapshots } from '@shared/schema';
-import type { Deal, InsertDeal, User, MagicToken, Session, DealSnapshot } from '@shared/schema';
+import { deals, users, magicTokens, sessions, dealSnapshots, compHeroState } from '@shared/schema';
+import type { Deal, InsertDeal, User, MagicToken, Session, DealSnapshot, CompHeroStateRow } from '@shared/schema';
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { and, eq, desc, gt, lt, isNull, or, asc } from "drizzle-orm";
@@ -92,7 +92,33 @@ sqlite.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_deal_snapshots_deal_id ON deal_snapshots(deal_id);
+
+  CREATE TABLE IF NOT EXISTS comp_hero_state (
+    deal_id INTEGER PRIMARY KEY,
+    selected_comp_keys TEXT NOT NULL DEFAULT '[]',
+    manual_comps TEXT NOT NULL DEFAULT '[]',
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE
+  );
 `);
+
+// v1.7.4 migration guard: comp_hero_state table (same runtime-ALTER pattern as
+// prior releases — CREATE TABLE IF NOT EXISTS above already covers fresh boots;
+// this guard exists for older data.db files that predate the bootstrap block
+// running with this table included, mirroring the deal_snapshots precedent).
+try {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS comp_hero_state (
+      deal_id INTEGER PRIMARY KEY,
+      selected_comp_keys TEXT NOT NULL DEFAULT '[]',
+      manual_comps TEXT NOT NULL DEFAULT '[]',
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE
+    );
+  `);
+} catch (e) {
+  console.warn("comp_hero_state migration skipped:", e);
+}
 
 // Migration: add user_id column to deals if missing (for upgrades from pre-auth db)
 try {
@@ -206,6 +232,13 @@ export interface IStorage {
   deleteSnapshot(dealId: number, snapshotId: number): Promise<"deleted" | "not_found" | "is_original">;
   /** Prune oldest non-original snapshots until at most `max` remain. */
   pruneSnapshots(dealId: number, max: number): Promise<number>;
+
+  // Comp Hero state (v1.7.4). Callers must verify deal ownership first.
+  getCompHeroState(dealId: number): Promise<CompHeroStateRow | undefined>;
+  upsertCompHeroState(
+    dealId: number,
+    patch: { selectedCompKeys?: string; manualComps?: string },
+  ): Promise<CompHeroStateRow>;
 
   // Users
   getUserById(id: number): Promise<User | undefined>;
@@ -382,6 +415,41 @@ export class DatabaseStorage implements IStorage {
       excess--;
     }
     return removed;
+  }
+
+  // ---------- Comp Hero state ----------
+  async getCompHeroState(dealId: number): Promise<CompHeroStateRow | undefined> {
+    return db.select().from(compHeroState).where(eq(compHeroState.dealId, dealId)).get();
+  }
+
+  async upsertCompHeroState(
+    dealId: number,
+    patch: { selectedCompKeys?: string; manualComps?: string },
+  ): Promise<CompHeroStateRow> {
+    const now = Date.now();
+    const existing = await this.getCompHeroState(dealId);
+    if (!existing) {
+      return db
+        .insert(compHeroState)
+        .values({
+          dealId,
+          selectedCompKeys: patch.selectedCompKeys ?? "[]",
+          manualComps: patch.manualComps ?? "[]",
+          updatedAt: new Date(now),
+        })
+        .returning()
+        .get();
+    }
+    return db
+      .update(compHeroState)
+      .set({
+        ...(patch.selectedCompKeys !== undefined ? { selectedCompKeys: patch.selectedCompKeys } : {}),
+        ...(patch.manualComps !== undefined ? { manualComps: patch.manualComps } : {}),
+        updatedAt: new Date(now),
+      })
+      .where(eq(compHeroState.dealId, dealId))
+      .returning()
+      .get();
   }
 
   // ---------- Users ----------

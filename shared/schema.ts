@@ -134,6 +134,55 @@ export const sourcesUsesOverridesSchema = z.object({
 
 export type SourcesUsesOverrides = z.infer<typeof sourcesUsesOverridesSchema>;
 
+// Comp Hero (v1.7.4) — persists the user's comp check/uncheck selection and any
+// manually-added comps for a deal's dedicated /deal/:id/comp-hero view. Kept as
+// its own table (rather than piggybacking on deals.notes like the auto-comps
+// envelope) so selection state survives a Refresh Deal snapshot cycle without
+// colliding with the comps JSON. `dealId` is INTEGER to match deals.id.
+export const compHeroState = sqliteTable("comp_hero_state", {
+  dealId: integer("deal_id").primaryKey().references(() => deals.id, { onDelete: "cascade" }),
+  selectedCompKeys: text("selected_comp_keys").notNull().default("[]"), // JSON array of comp identifiers
+  manualComps: text("manual_comps").notNull().default("[]"), // JSON array of manual comp objects
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
+export type CompHeroStateRow = typeof compHeroState.$inferSelect;
+
+// Manual comp object shape — stored as JSON inside compHeroState.manualComps.
+export const manualCompSourceSchema = z.enum([
+  "manual-address",
+  "manual-url-zillow",
+  "manual-url-redfin",
+  "manual-url-fallback",
+]);
+
+export const manualCompSchema = z.object({
+  id: z.string(),
+  source: manualCompSourceSchema,
+  address: z.string(),
+  city: z.string().nullable(),
+  state: z.string().nullable(),
+  zip: z.string().nullable(),
+  sqft: z.number().nullable(),
+  beds: z.number().nullable(),
+  baths: z.number().nullable(),
+  style: z.string().nullable(),
+  soldPrice: z.number().nullable(),
+  soldDate: z.string().nullable(), // ISO
+  photoUrl: z.string().nullable(),
+  addedAt: z.number(),
+  isEditable: z.literal(true),
+});
+
+export type ManualComp = z.infer<typeof manualCompSchema>;
+
+export const compHeroStateBodySchema = z.object({
+  selectedCompKeys: z.array(z.string()),
+  manualComps: z.array(manualCompSchema),
+});
+
+export type CompHeroStateBody = z.infer<typeof compHeroStateBodySchema>;
+
 // Zod schema for the runtime inputs object stored as JSON in `inputs`
 export const dealInputsSchema = z.object({
   purchasePrice: z.number().nonnegative(),
