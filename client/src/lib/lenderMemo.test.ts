@@ -19,12 +19,12 @@ const inputs = {
   sourcesUsesOverrides: { financing: 22000, holding: 4800 },
 };
 
-async function pdfText(result: { blob: Blob }) {
+async function pdfText(result: { blob: Blob }, bounds = false) {
   const dir = mkdtempSync(join(tmpdir(), "lender-memo-"));
   try {
     const file = join(dir, "memo.pdf");
     writeFileSync(file, Buffer.from(await result.blob.arrayBuffer()));
-    return execFileSync("pdftotext", ["-layout", file, "-"], { encoding: "utf8" });
+    return execFileSync("pdftotext", [bounds ? "-bbox" : "-layout", file, "-"], { encoding: "utf8" });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -33,7 +33,7 @@ async function pdfText(result: { blob: Blob }) {
 test("Flip PDF uses the institutional lender memo and actual display calculations", async () => {
   const result = await exporter.exportDealPdfBlob(deal, inputs);
   const text = await pdfText(result);
-  assert.match(text, /PRIVATE EQUITY UNDERWRITING/);
+  assert.ok(text.replace(/\s/g, "").includes("REALESTATEINTELLIGENCE"));
   assert.match(text, /CONFIDENTIAL UNDERWRITING/);
   assert.match(text, /PROPBOXIQ UNDERWRITING SCORE/);
   assert.match(text, /SOURCES & USES/);
@@ -53,7 +53,7 @@ test("Hold PDF exports the edited inputs and both existing scores without invent
   const r = calculateHold(holdInputs);
   const result = await exporter.exportHoldPdfBlob(state, holdInputs);
   const text = await pdfText(result);
-  assert.match(text, /PRIVATE EQUITY UNDERWRITING/);
+  assert.ok(text.replace(/\s/g, "").includes("REALESTATEINTELLIGENCE"));
   assert.match(text, /HOLD \/ RENTAL/);
   assert.match(text, /OPERATING PROFILE/);
   assert.match(text, /Long-term score/);
@@ -70,10 +70,40 @@ test("Long notes paginate before the footer and preserve the last line", async (
   const pages = text.split("\f").filter(p => p.trim());
   assert.ok(pages.length >= 4, "notes must paginate, not overflow one page");
   for (const page of pages) {
+    assert.ok(page.replace(/\s/g, "").includes("REALESTATEINTELLIGENCE"), "approved header repeats on every page");
     assert.match(page, /CONFIDENTIAL UNDERWRITING/);
     assert.match(page, /Page \d+ of \d+/);
   }
   assert.match(text, /Note 120:/);
+});
+
+test("Both strategies use the approved uppercase vector-brand header without the old tagline", async () => {
+  const state = { ...DEFAULT_HOLD_STATE, address: deal.address };
+  for (const result of [
+    await exporter.exportDealPdfBlob(deal, inputs),
+    await exporter.exportHoldPdfBlob(state, toHoldInputs(state)),
+  ]) {
+    const text = await pdfText(result);
+    const pages = text.split("\f").filter(p => p.trim());
+    for (const page of pages) {
+      const compact = page.replace(/\s/g, "");
+      assert.ok(compact.includes("PROPBOXIQ"));
+      assert.ok(compact.includes("REALESTATEINTELLIGENCE"));
+      assert.ok(compact.includes("INVESTMENTMEMORANDUM"));
+      assert.doesNotMatch(page, /PRIVATE EQUITY UNDERWRITING/);
+    }
+    const raw = Buffer.from(await result.blob.arrayBuffer()).toString("latin1");
+    assert.doesNotMatch(raw, /\/Subtype \/Image/, "header remains vector-sharp rather than a raster mockup");
+    const bounds = await pdfText(result, true);
+    for (const word of bounds.matchAll(/<word xMin="([^"]+)" yMin="([^"]+)" xMax="([^"]+)" yMax="([^"]+)"/g)) {
+      if (Number(word[2]) < 76) {
+        // Allow 1pt for Poppler/jsPDF standard-font metric differences, not
+        // the 11–20pt drift caused by unaccounted character spacing.
+        assert.ok(Number(word[1]) >= 39 && Number(word[3]) <= 573,
+          "tracked header text must respect the report's 40pt margins");
+      }
+    }
+  }
 });
 
 test("Missing and excluded comps are represented honestly", async () => {

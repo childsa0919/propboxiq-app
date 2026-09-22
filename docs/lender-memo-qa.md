@@ -43,7 +43,7 @@ This change does not send lender emails, approve a loan, fetch new market eviden
 
 ## Executed verification
 
-- Six automated report tests passed; TypeScript check and production build passed.
+- Seven automated report tests passed; TypeScript check and production build passed.
 - Both actual download buttons were exercised in an isolated application with synthetic data. Downloaded PDFs contained the new lender memo.
 - The existing email dialog opened successfully; no email was sent. Attachment byte/base64 consistency is covered by the automated tests.
 - Both two-page sample PDFs were visually inspected and passed text-boundary checks.
@@ -51,3 +51,7 @@ This change does not send lender emails, approve a loan, fetch new market eviden
 - An existing horizontal overflow in Quick Result's sources-and-uses/map region was observed, outside the modified controls. It is not changed by this print-only task.
 - The app uses hash routing (`/#/result/:id` and `/#/hold/result`), which was preserved.
 - Build emitted PostCSS and large-chunk warnings; neither was introduced as part of a build-configuration change.
+
+## Approved header refinement
+
+The approved navy header now uses the existing four-tile mark as native PDF outlines, including the original house cutout and muted teal fourth tile. The uppercase tracked wordmark, Real Estate Intelligence descriptor, confidentiality label, and thin teal rule match the approved direction. Strategy and date remain visible. Both strategies and all continuation pages use the same header; no raster mockup is embedded. Tests verify repeated branding, absence of the superseded tagline, and the 40pt text margins including tracked right-aligned labels.

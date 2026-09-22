@@ -34,7 +34,9 @@ class LenderMemo {
     this.doc.setFont("helvetica", bold ? "bold" : "normal");
     this.doc.setFontSize(size);
     this.doc.setTextColor(...color);
-    this.doc.text(value, x, y, right ? { align: "right" } : {});
+    // jsPDF's right alignment measures glyphs but not character spacing.
+    const trackingOffset = right ? this.doc.getCharSpace() * Math.max(0, value.length - 1) : 0;
+    this.doc.text(value, x - trackingOffset, y, right ? { align: "right" } : {});
   }
 
   line(x: number, y: number, width: number, color = RULE) {
@@ -47,20 +49,54 @@ class LenderMemo {
     const d = this.doc;
     d.setFillColor(...NAVY);
     d.rect(0, 0, W, 76, "F");
-    d.setFillColor(...TEAL);
-    d.rect(0, 76, W, 3, "F");
-    // Compact geometric brand mark, kept vector-sharp in print.
-    [[0, 0], [12, 0], [0, 12], [12, 12]].forEach(([x, y], n) => {
-      d.setFillColor(...(n === 3 ? [95, 212, 231] as RGB : WHITE));
-      d.rect(M + x, 25 + y, 9, 9, "F");
-    });
-    d.setFillColor(...NAVY);
-    d.lines([[2.6, 2], [0, 3.6], [-5.2, 0], [0, -3.6], [2.6, -2]],
-      M + 4.5, 27, [1, 1], "F", true);
-    this.text("PropBoxIQ", M + 33, 43, 21, true, WHITE);
-    this.text("PRIVATE EQUITY UNDERWRITING", M, 63, 7.5, false, [191, 211, 219]);
-    this.text("INVESTMENT MEMORANDUM", W - M, 32, 8, true, WHITE, true);
-    this.text(`${this.strategy}  /  ${this.date}`, W - M, 49, 8, false, [191, 211, 219], true);
+    d.setFillColor(62, 151, 166);
+    d.rect(0, 76, W, 1, "F");
+
+    // Approved architectural trace: the existing four-tile identity, not a
+    // generic house. Native PDF paths keep the fine outline sharp at any scale.
+    const scale = 0.45, left = M - 6 * scale, top = 23 - 6 * scale;
+    d.setDrawColor(242, 247, 247);
+    d.setLineWidth(0.85);
+    d.setLineCap("round");
+    d.setLineJoin("round");
+    const houseTile = [
+      { op: "m", c: [10, 6] },
+      { op: "l", c: [34, 6] },
+      { op: "c", c: [36.2, 6, 38, 7.8, 38, 10] },
+      { op: "l", c: [38, 34] },
+      { op: "c", c: [38, 36.2, 36.2, 38, 34, 38] },
+      { op: "l", c: [31.5, 38] },
+      { op: "c", c: [30, 38, 30, 35.5, 30, 32.6] },
+      { op: "l", c: [30, 20.9] },
+      { op: "l", c: [22, 14.6] },
+      { op: "l", c: [14, 20.9] },
+      { op: "l", c: [14, 32.6] },
+      { op: "c", c: [14, 35.5, 14, 38, 12.5, 38] },
+      { op: "l", c: [10, 38] },
+      { op: "c", c: [7.8, 38, 6, 36.2, 6, 34] },
+      { op: "l", c: [6, 10] },
+      { op: "c", c: [6, 7.8, 7.8, 6, 10, 6] },
+      { op: "h", c: [] },
+    ];
+    d.path(houseTile.map(({ op, c }) => ({
+      op, c: c.map((v, i) => v * scale + (i % 2 ? top : left)),
+    }))).stroke();
+    d.roundedRect(left + 42 * scale, top + 6 * scale, 32 * scale, 32 * scale, 4 * scale, 4 * scale, "S");
+    d.roundedRect(left + 6 * scale, top + 42 * scale, 32 * scale, 32 * scale, 4 * scale, 4 * scale, "S");
+    d.setDrawColor(163, 202, 212);
+    d.roundedRect(left + 42 * scale, top + 42 * scale, 32 * scale, 32 * scale, 4 * scale, 4 * scale, "S");
+    d.setLineCap("butt");
+    d.setLineJoin("miter");
+
+    d.setCharSpace(2.25);
+    this.text("PROPBOXIQ", M + 44, 41, 17, true, [242, 247, 247]);
+    d.setCharSpace(1.15);
+    this.text("REAL ESTATE INTELLIGENCE", M + 44, 54, 6.5, false, [163, 194, 206]);
+    d.setCharSpace(1);
+    this.text("INVESTMENT MEMORANDUM", W - M, 31, 6.5, false, [163, 194, 206], true);
+    this.text("CONFIDENTIAL", W - M, 43, 6.5, false, [163, 194, 206], true);
+    d.setCharSpace(0);
+    this.text(`${this.strategy}  /  ${this.date}`, W - M, 61, 7, false, [191, 211, 219], true);
     this.y = 103;
   }
 
