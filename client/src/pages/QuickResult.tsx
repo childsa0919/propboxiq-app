@@ -63,14 +63,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect, useRef } from "react";
 import CountUp from "react-countup";
 
-// Direction A — derive a Deal Score (0–100) from the underwriting result.
-// Heuristic: weighted ROI on cash + margin + a hold penalty. Bounded 0–100.
-function computeDealScore(roi: number, marginPct: number, holdMonths: number) {
-  const roiPart = Math.max(0, Math.min(45, roi * 0.9));
-  const marginPart = Math.max(0, Math.min(45, marginPct * 1.4));
-  const holdPenalty = Math.max(0, (holdMonths - 6) * 1.5);
-  return Math.max(0, Math.min(100, Math.round(roiPart + marginPart + 10 - holdPenalty)));
-}
+import { computeDealScore } from "@/lib/dealScore";
 
 export default function QuickResult() {
   const [, params] = useRoute("/result/:id");
@@ -539,7 +532,7 @@ export default function QuickResult() {
           data-testid="button-export-pdf"
         >
           <FileDown className="h-4 w-4 mr-2" />
-          Export PDF
+          Download Lender Memo
         </Button>
         <Button
           variant="outline"
