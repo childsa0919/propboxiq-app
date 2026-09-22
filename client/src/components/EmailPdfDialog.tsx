@@ -126,10 +126,10 @@ export function EmailPdfDialog({
           <DialogTitle
             className="font-display font-bold tracking-[-0.02em] text-[22px] leading-[1.1] text-foreground"
           >
-            Send the deal sheet
+            Send the underwriting report
           </DialogTitle>
           <p className="mt-1.5 text-[13px] text-muted-foreground leading-relaxed">
-            A one-page PDF with comps, ARV math, and your Deal Score — branded with your name.
+            Share the PropBoxIQ PDF with your underwriting figures and supporting assumptions.
           </p>
 
           <div className="mt-5 space-y-4">

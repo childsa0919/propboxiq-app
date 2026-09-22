@@ -8,7 +8,8 @@
 
 import { useMemo, useState } from "react";
 import { useLocation, useSearch } from "wouter";
-import { Pencil, Bookmark } from "lucide-react";
+import { Pencil, Bookmark, Download } from "lucide-react";
+import { exportHoldPdf } from "@/lib/exportPdf";
 import { fmtUSD, fmtPct } from "@/lib/calc";
 import {
   calculateHold,
@@ -382,6 +383,22 @@ export default function HoldResult() {
           `Tax ≈ ${fmtUSD(Math.round(estimatePropertyTax(inputs.purchasePrice)))}/yr.`}{" "}
         Projections assume 3% rent / expense / appreciation growth.
       </p>
+
+      <button
+        type="button"
+        onClick={() => {
+          try {
+            exportHoldPdf(state, inputs);
+          } catch {
+            toast({ title: "PDF could not be generated", description: "Please try again.", variant: "destructive" });
+          }
+        }}
+        data-testid="button-export-hold-pdf"
+        className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-md border border-border bg-[#0F2E3D] text-sm font-semibold text-white"
+      >
+        <Download className="h-4 w-4" />
+        Download Lender Memo
+      </button>
 
       {/* Sticky footer CTAs */}
       <div
