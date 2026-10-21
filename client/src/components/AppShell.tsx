@@ -1,6 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { Logo, Wordmark } from "./Logo";
 import { Button } from "@/components/ui/button";
+import { InboxTrayButton } from "@/components/share/InboxTrayButton";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -73,6 +74,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 Deals
               </Button>
             </Link>
+            <InboxTrayButton />
             <Link href="/settings">
               <Button
                 variant={isSettings ? "secondary" : "ghost"}

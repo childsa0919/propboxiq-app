@@ -48,7 +48,9 @@ import {
   GitCompare,
   Trash2,
   Trophy,
+  Send,
 } from "lucide-react";
+import { SendDealSheet } from "@/components/share/SendDealSheet";
 
 export default function DealPage() {
   const { id } = useParams<{ id: string }>();
@@ -71,6 +73,7 @@ export default function DealPage() {
   }>({});
   const [dirty, setDirty] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false); // v1.8.0 Deal Sharing
   const [budgetOpen, setBudgetOpen] = useState(false);
 
   // Hydrate from server
@@ -226,6 +229,18 @@ export default function DealPage() {
             <Save className="h-4 w-4 mr-2" />
             {saveMut.isPending ? "Saving…" : dirty ? "Save changes" : "Saved"}
           </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="Send deal"
+            onClick={() => {
+              if (dirty && !window.confirm("You have unsaved changes. Send the last saved version?")) return;
+              setSendOpen(true);
+            }}
+            data-testid="button-send-deal-header"
+          >
+            <Send className="h-4 w-4" />
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" aria-label="More actions" data-testid="button-more-menu">
@@ -250,6 +265,15 @@ export default function DealPage() {
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => exportDealPdf(deal, inputs)} data-testid="menu-export-pdf">
                 <Download className="h-4 w-4 mr-2" /> Export PDF
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  if (dirty && !window.confirm("You have unsaved changes. Send the last saved version?")) return;
+                  setSendOpen(true);
+                }}
+                data-testid="menu-send-deal"
+              >
+                <Send className="h-4 w-4 mr-2" /> Send deal
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setEmailOpen(true)} data-testid="menu-email-pdf">
                 <Mail className="h-4 w-4 mr-2" /> Email
@@ -626,6 +650,7 @@ export default function DealPage() {
         }}
       />
 
+      <SendDealSheet dealId={deal.id} open={sendOpen} onOpenChange={setSendOpen} />
       <EmailPdfDialog
         open={emailOpen}
         onOpenChange={setEmailOpen}

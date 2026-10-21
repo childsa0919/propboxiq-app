@@ -9,6 +9,8 @@ export interface SnapshotListItem {
   id: number;
   dealId: number;
   isOriginal: boolean;
+  /** v1.8.0: e.g. "Received from Jordan Rivera" on an accepted shared deal. */
+  label?: string | null;
   createdAt: number;
   changeSummary: ChangeSummary | null;
   preview: {
@@ -134,7 +136,7 @@ export function SnapshotHistory({ dealId }: { dealId: number }) {
                     )}
                     {s.isOriginal && (
                       <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                        Original
+                        {s.label || "Original"}
                       </span>
                     )}
                   </div>

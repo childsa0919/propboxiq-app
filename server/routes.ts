@@ -47,6 +47,8 @@ import {
   compTier,
 } from "@shared/propAttributes";
 import { MD_GIS_SCOPE } from "./siteGis";
+import { registerDealShareRoutes } from "./dealShareRoutes";
+import { withReceivedFromNames } from "./dealShares";
 import {
   runWelcomeDrip,
   sendDripBatch,
@@ -121,6 +123,9 @@ export async function registerRoutes(
   app.use(sessionMiddleware);
   // Body parser is registered in server/index.ts. Trust the proxy so Secure cookies work.
   app.set("trust proxy", 1);
+
+  // v1.8.0 Deal Sharing: /s/:token + /api/deals/:id/share + /api/shares/*.
+  registerDealShareRoutes(app);
 
   // ----- Auth: request magic link -----
   //
@@ -1783,7 +1788,8 @@ export async function registerRoutes(
   // ----- Deals CRUD (auth-required, scoped to current user) -----
   app.get("/api/deals", requireAuth, async (req, res) => {
     const userId = (req as any).userId as number;
-    res.json(await storage.listDeals(userId));
+    // v1.8.0: accepted shared copies carry a "From {name}" tag.
+    res.json(await withReceivedFromNames(await storage.listDeals(userId)));
   });
 
   app.get("/api/deals/:id", requireAuth, async (req, res) => {
@@ -1930,6 +1936,12 @@ export async function registerRoutes(
         dealId: r.dealId,
         isOriginal: r.isOriginal,
         createdAt: r.createdAt,
+        // v1.8.0: optional display label stored alongside the payload (e.g.
+        // "Received from Jordan Rivera" on an accepted shared deal).
+        label:
+          payload && typeof (payload as { label?: unknown }).label === "string"
+            ? ((payload as { label?: string }).label as string)
+            : null,
         changeSummary: r.changeSummary ? JSON.parse(r.changeSummary) : null,
         preview: payload
           ? {

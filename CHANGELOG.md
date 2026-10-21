@@ -3,6 +3,13 @@
 All notable changes to PropBoxIQ are documented here. This project follows
 [semantic versioning](https://semver.org/).
 
+## [1.8.0] — 2026-10-21
+### Added
+- Send Flip deals to other users by email, with an optional pre-filled text from your phone
+- "Shared deals" inbox with Accept & copy / Decline, plus a badge in the header
+- Sent tab showing Pending, Invited, Accepted, Declined, and Expired status
+- Email invites for recipients without a PropBoxIQ account (30-day expiry)
+
 ## [1.7.6] — 2026-08-04
 ### Changed
 - Comp Hero PDF: real static map via Mapbox (light theme, matches institutional aesthetic)

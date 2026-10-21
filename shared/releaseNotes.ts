@@ -12,6 +12,16 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.8.0",
+    date: "2026-10-21",
+    added: [
+      "Send Flip deals to other users by email, with an optional pre-filled text from your phone",
+      "\"Shared deals\" inbox with Accept & copy / Decline, plus a badge in the header",
+      "Sent tab showing Pending, Invited, Accepted, Declined, and Expired status",
+      "Email invites for recipients without a PropBoxIQ account (30-day expiry)",
+    ],
+  },
+  {
     version: "1.7.6",
     date: "2026-08-04",
     changed: [

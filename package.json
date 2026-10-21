@@ -1,6 +1,6 @@
 {
   "name": "rest-express",
-  "version": "1.7.6",
+  "version": "1.8.0",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -8,6 +8,7 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "test:shares": "tsx server/scripts/testDealShares.ts && tsx server/scripts/testDealShareRoutes.ts && tsx --test shared/dealShares.test.ts client/src/lib/shares.test.ts",
     "test:memo": "tsx --test client/src/lib/lenderMemo.test.ts",
     "sample:memo": "tsx script/render-lender-memo-samples.ts",
     "db:push": "drizzle-kit push"

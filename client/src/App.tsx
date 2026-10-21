@@ -1,4 +1,5 @@
-import { Switch, Route, Router } from "wouter";
+import { useEffect } from "react";
+import { Switch, Route, Router, useLocation } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -21,6 +22,9 @@ import CompHeroPage from "@/components/CompHero/CompHeroPage";
 import Deals from "@/pages/Deals";
 import Settings from "@/pages/Settings";
 import Login from "@/pages/Login";
+import SharedDealsPage from "@/pages/SharedDealsPage";
+import ShareLinkPage from "@/pages/ShareLinkPage";
+import { capturePendingShareFromHash, takePendingShare } from "@/lib/shares";
 import { Loader2 } from "lucide-react";
 
 function AppRouter() {
@@ -37,6 +41,8 @@ function AppRouter() {
       <Route path="/deal/:id" component={DealPage} />
       <Route path="/deals" component={Deals} />
       <Route path="/settings" component={Settings} />
+      <Route path="/shared"><SharedDealsPage /></Route>
+      <Route path="/s/:token" component={ShareLinkPage} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -49,6 +55,19 @@ function AppRouter() {
  */
 function AuthGate() {
   const { user, isLoading } = useAuth();
+  const [, navigate] = useLocation();
+
+  // v1.8.0 Deal Sharing: a signed-out visitor on /#/s/:token signs in first
+  // (Google redirects back to "/"), so remember the token and replay it.
+  useEffect(() => {
+    if (isLoading) return;
+    if (!user) {
+      capturePendingShareFromHash();
+      return;
+    }
+    const pending = takePendingShare();
+    if (pending) navigate(`/s/${pending}`, { replace: true });
+  }, [user, isLoading, navigate]);
 
   if (isLoading) {
     return (

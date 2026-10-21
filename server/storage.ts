@@ -1,4 +1,5 @@
 import { deals, users, magicTokens, sessions, dealSnapshots, compHeroState } from '@shared/schema';
+import { SHARE_INVITE_TTL_MS } from '@shared/dealShares';
 import type { Deal, InsertDeal, User, MagicToken, Session, DealSnapshot, CompHeroStateRow } from '@shared/schema';
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -17,6 +18,9 @@ const sqlite = new Database(DB_PATH);
 sqlite.pragma("journal_mode = WAL");
 
 export const db = drizzle(sqlite);
+// Raw handle for the few call sites that need explicit BEGIN/COMMIT around
+// async storage helpers (v1.8.0 share accept).
+export const sqliteDb = sqlite;
 
 // Bootstrap schema on startup (no migrations setup)
 sqlite.exec(`
@@ -102,6 +106,37 @@ sqlite.exec(`
   );
 `);
 
+// v1.8.0 Deal Sharing. Same runtime CREATE-IF-NOT-EXISTS pattern as the
+// tables above (no migration files). source_deal_id / accepted_deal_id are
+// intentionally NOT declared as FOREIGN KEYs: the share must keep working
+// after the sender deletes the source deal (the payload is frozen).
+try {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS deal_shares (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token TEXT NOT NULL UNIQUE,
+      sender_user_id INTEGER NOT NULL REFERENCES users(id),
+      source_deal_id INTEGER NOT NULL,
+      recipient_email TEXT NOT NULL,
+      recipient_user_id INTEGER REFERENCES users(id),
+      invited INTEGER NOT NULL DEFAULT 0,
+      texted INTEGER NOT NULL DEFAULT 0,
+      note TEXT,
+      payload TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      accepted_deal_id INTEGER,
+      created_at INTEGER NOT NULL,
+      responded_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_deal_shares_recipient ON deal_shares(recipient_email, status);
+    CREATE INDEX IF NOT EXISTS idx_deal_shares_sender ON deal_shares(sender_user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_deal_shares_token ON deal_shares(token);
+  `);
+} catch (e) {
+  console.warn("deal_shares migration skipped:", e);
+}
+
 // v1.7.4 migration guard: comp_hero_state table (same runtime-ALTER pattern as
 // prior releases — CREATE TABLE IF NOT EXISTS above already covers fresh boots;
 // this guard exists for older data.db files that predate the bootstrap block
@@ -140,6 +175,8 @@ for (const [col, ddl] of [
   ["last_opened_at", "ALTER TABLE deals ADD COLUMN last_opened_at INTEGER;"],
   // v1.6.1: Walkthrough Budget line items (JSON).
   ["budget", "ALTER TABLE deals ADD COLUMN budget TEXT;"],
+  // v1.8.0: "From {name}" tag on accepted shared-deal copies.
+  ["received_from_user_id", "ALTER TABLE deals ADD COLUMN received_from_user_id INTEGER;"],
 ] as const) {
   try {
     const cols = sqlite.prepare("PRAGMA table_info(deals)").all() as Array<{ name: string }>;
@@ -467,6 +504,32 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertUser(email: string, name?: string | null): Promise<{ user: User; isNew: boolean }> {
+    const result = await this.upsertUserRow(email, name);
+    this.linkPendingShares(result.user);
+    return result;
+  }
+
+  /**
+   * v1.8.0 Deal Sharing: claim every still-valid pending share addressed to
+   * this email (invites sent before the account existed). Expired invites
+   * (> 30 days, still unclaimed) are left alone so they stay EXPIRED.
+   * Idempotent — safe to run on every sign-in.
+   */
+  private linkPendingShares(user: User): void {
+    try {
+      sqlite
+        .prepare(
+          `UPDATE deal_shares SET recipient_user_id = ?
+           WHERE recipient_user_id IS NULL AND status = 'pending'
+             AND recipient_email = ? AND created_at >= ?`,
+        )
+        .run(user.id, user.email.toLowerCase(), Date.now() - SHARE_INVITE_TTL_MS);
+    } catch (e) {
+      console.warn("[storage] linkPendingShares failed:", e);
+    }
+  }
+
+  private async upsertUserRow(email: string, name?: string | null): Promise<{ user: User; isNew: boolean }> {
     const lower = email.toLowerCase().trim();
     const existing = await this.getUserByEmail(lower);
     if (existing) {
