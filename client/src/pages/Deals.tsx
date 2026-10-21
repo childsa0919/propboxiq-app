@@ -875,6 +875,15 @@ function DealRow({
             >
               {deal.name?.trim() || deal.address}
             </p>
+            {(deal as { receivedFromName?: string | null }).receivedFromName && (
+              <span
+                className="shrink-0 rounded px-1.5 py-[1px] text-[10px] font-semibold"
+                style={{ color: "#5fd4e7", background: "rgba(95,212,231,0.12)" }}
+                data-testid={`tag-received-from-${deal.id}`}
+              >
+                From {(deal as { receivedFromName?: string | null }).receivedFromName!.split(" ")[0]}
+              </span>
+            )}
           </div>
           <p className="mt-0.5 text-[12px] text-muted-foreground truncate">
             {deal.city && deal.state ? `${deal.city}, ${deal.state}` : "Address pending"}
