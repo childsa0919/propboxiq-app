@@ -47,7 +47,9 @@ import {
   Mail,
   ClipboardList,
   Trophy,
+  Send,
 } from "lucide-react";
+import { SendDealSheet } from "@/components/share/SendDealSheet";
 import {
   stylesMatch,
   combinedHvacLabel,
@@ -103,6 +105,12 @@ export default function QuickResult() {
   });
 
   const [emailOpen, setEmailOpen] = useState(false);
+  // v1.8.0 Deal Sharing
+  const [sendOpen, setSendOpen] = useState(false);
+  const openSend = () => {
+    if (sourcesUsesDirty && !window.confirm("You have unsaved Sources & Uses edits. Send the last saved version?")) return;
+    setSendOpen(true);
+  };
   const [budgetOpen, setBudgetOpen] = useState(false);
   // Set while the Sources & Uses card holds uncommitted edits, so the Home
   // button (a plain navigate(), not an anchor) can confirm before leaving.
@@ -143,12 +151,18 @@ export default function QuickResult() {
           <ArrowLeft className="h-4 w-4 mr-1.5" />
           Home
         </Button>
-        <Link href="/quick">
-          <Button variant="outline" size="sm" data-testid="button-new-deal">
-            <RotateCcw className="h-4 w-4 mr-1.5" />
-            Analyze another
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={openSend} data-testid="button-send-deal">
+            <Send className="h-4 w-4 mr-1.5" />
+            Send
           </Button>
-        </Link>
+          <Link href="/quick">
+            <Button variant="outline" size="sm" data-testid="button-new-deal">
+              <RotateCcw className="h-4 w-4 mr-1.5" />
+              Analyze another
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Address card */}
@@ -543,7 +557,13 @@ export default function QuickResult() {
           <Mail className="h-4 w-4 mr-2" />
           Email
         </Button>
+        <Button variant="outline" size="sm" onClick={openSend} data-testid="button-send-deal-bottom">
+          <Send className="h-4 w-4 mr-2" />
+          Send deal
+        </Button>
       </div>
+
+      <SendDealSheet dealId={deal.id} open={sendOpen} onOpenChange={setSendOpen} />
 
       <WalkthroughBudget
         deal={deal}
