@@ -85,6 +85,9 @@ export const deals = sqliteTable("deals", {
   // Tracks the last time the user opened/viewed this deal (vs updatedAt which
   // bumps on every PATCH). Powers the "Recently viewed" sort.
   lastOpenedAt: integer("last_opened_at"),
+  // v1.8.0 Deal Sharing: set on a recipient's accepted copy so the deal list
+  // can show a small "From {name}" tag. Null for deals the user created.
+  receivedFromUserId: integer("received_from_user_id"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -93,6 +96,8 @@ export const insertDealSchema = createInsertSchema(deals).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+  // Server-owned: only the share-accept transaction sets this.
+  receivedFromUserId: true,
 });
 
 export type InsertDeal = z.infer<typeof insertDealSchema>;
@@ -114,6 +119,31 @@ export const dealSnapshots = sqliteTable("deal_snapshots", {
 
 export type DealSnapshot = typeof dealSnapshots.$inferSelect;
 export type InsertDealSnapshot = typeof dealSnapshots.$inferInsert;
+
+// Deal Sharing (v1.8.0). One row per "Send deal". `payload` is the frozen JSON
+// bundle (SharePayloadV1) the recipient's copy is built from on accept, so the
+// share keeps working even if the sender edits or deletes the source deal.
+// `summary` is the card-ready ShareSummary. The phone number is never stored —
+// only `texted` records that the sender used the SMS handoff.
+export const dealShares = sqliteTable("deal_shares", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  token: text("token").notNull().unique(),
+  senderUserId: integer("sender_user_id").notNull(),
+  sourceDealId: integer("source_deal_id").notNull(),
+  recipientEmail: text("recipient_email").notNull(),
+  recipientUserId: integer("recipient_user_id"),
+  invited: integer("invited", { mode: "boolean" }).notNull().default(false),
+  texted: integer("texted", { mode: "boolean" }).notNull().default(false),
+  note: text("note"),
+  payload: text("payload").notNull(),
+  summary: text("summary").notNull(),
+  status: text("status").notNull().default("pending"), // pending | accepted | declined
+  acceptedDealId: integer("accepted_deal_id"),
+  createdAt: integer("created_at").notNull(),
+  respondedAt: integer("responded_at"),
+});
+
+export type DealShare = typeof dealShares.$inferSelect;
 
 // Manual per-row edits made in the "Where the money goes" (Sources & Uses)
 // card. Only the terminal cost rows appear here: purchase price and rehab write
